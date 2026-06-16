@@ -20,6 +20,7 @@ limitations under the License.
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <shared_mutex>
 #include <string>
 #include <thread>
@@ -60,6 +61,8 @@ class XServiceClient {
 
   // get all xllm_service addrs
   std::vector<std::string> get_all_xservice_addrs();
+
+  nlohmann::json debug_summary();
 
   // response generation tokens to xllm service
   std::vector<bool> generations(const std::vector<RequestOutput>& outputs);

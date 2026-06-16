@@ -154,6 +154,19 @@ DEFINE_GAUGE(xllm_cpu_utilization, "The cpu utilization pre instance for xllm");
 DEFINE_GAUGE(xllm_gpu_num, "The gpu number pre instance for xllm");
 DEFINE_GAUGE(xllm_gpu_utilization, "The gpu utilization pre instance for xllm");
 
+DEFINE_GAUGE(peer_service_enabled,
+             "Whether peer-service rollout mode is enabled");
+DEFINE_GAUGE(xservice_connected_services,
+             "Number of xllm-service connections in XServiceClient");
+DEFINE_COUNTER(xservice_heartbeat_total,
+               "Total number of xllm-service heartbeats sent");
+DEFINE_COUNTER(xservice_heartbeat_success_total,
+               "Total number of successful xllm-service heartbeats");
+DEFINE_COUNTER(xservice_heartbeat_failure_total,
+               "Total number of failed xllm-service heartbeats");
+DEFINE_COUNTER(xservice_heartbeat_xtensor_total,
+               "Total number of xllm-service heartbeats with XTensor info");
+
 // speculative metrics
 DEFINE_COUNTER(speculative_execution_latency_seconds_draft,
                "Latency of draft execution in seconds");

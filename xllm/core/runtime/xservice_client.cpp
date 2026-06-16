@@ -24,6 +24,7 @@ limitations under the License.
 #include <algorithm>
 #include <unordered_map>
 
+#include "core/common/metrics.h"
 #include "core/framework/config/distributed_config.h"
 #include "core/framework/config/service_config.h"
 #include "util/env_var.h"
@@ -94,6 +95,10 @@ bool XServiceClient::init(const std::string& etcd_addr,
   chan_options_.max_retry = 3;
   chan_options_.timeout_ms =
       ::xllm::ServiceConfig::get_instance().rpc_channel_timeout_ms();
+  GAUGE_SET(peer_service_enabled,
+            ::xllm::DistributedConfig::get_instance().enable_peer_service()
+                ? 1.0
+                : 0.0);
 
   const std::string etcd_username =
       util::get_optional_string_env(kEtcdUsernameEnvVar).value_or("");
@@ -414,24 +419,31 @@ void XServiceClient::heartbeat() {
           proto_seg->set_size(seg.size);
         }
       }
+      COUNTER_INC(xservice_heartbeat_xtensor_total);
     }
 
     xllm_service::proto::Status resp;
     std::string master_addr;
+    COUNTER_INC(xservice_heartbeat_total);
     if (!with_master_stub(
             [&](xllm_service::proto::XllmRpcService_Stub* master_stub) {
               master_stub->Heartbeat(&cntl, &req, &resp, nullptr);
             },
             &master_addr)) {
+      COUNTER_INC(xservice_heartbeat_failure_total);
       continue;
     }
 
     if (cntl.Failed()) {
+      COUNTER_INC(xservice_heartbeat_failure_total);
       LOG(ERROR) << "Failed to send heartbeat to master xservice "
                  << master_addr << ", error msg is: " << cntl.ErrorText();
     } else if (!resp.ok()) {
+      COUNTER_INC(xservice_heartbeat_failure_total);
       LOG(ERROR) << "Failed to send heartbeat to master xservice "
                  << master_addr;
+    } else {
+      COUNTER_INC(xservice_heartbeat_success_total);
     }
   }
 }
@@ -489,6 +501,22 @@ std::vector<std::string> XServiceClient::get_all_xservice_addrs() {
     addrs.push_back(pair.first);
   }
   return addrs;
+}
+
+nlohmann::json XServiceClient::debug_summary() {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  nlohmann::json connected_services = nlohmann::json::array();
+  for (const auto& pair : xservice_stubs_) {
+    connected_services.push_back(pair.first);
+  }
+
+  nlohmann::json summary;
+  summary["instance_name"] = instance_name_;
+  summary["incarnation_id"] = incarnation_id_;
+  summary["master_xservice_addr"] = master_xservice_addr_;
+  summary["connected_service_count"] = xservice_stubs_.size();
+  summary["connected_services"] = std::move(connected_services);
+  return summary;
 }
 
 std::vector<bool> XServiceClient::generations(
@@ -707,6 +735,7 @@ bool XServiceClient::connect_to_xservice(const std::string& xservice_addr) {
   xservice_stubs_[xservice_addr] =
       std::make_unique<xllm_service::proto::XllmRpcService_Stub>(
           xservice_channels_[xservice_addr].get());
+  GAUGE_SET(xservice_connected_services, xservice_stubs_.size());
 
   LOG(INFO) << "Successfully connected to xservice: " << xservice_addr;
   return true;
@@ -777,6 +806,7 @@ void XServiceClient::disconnect_xservice(const std::string& xservice_addr) {
 
   if (xservice_stubs_.erase(xservice_addr) > 0) {
     xservice_channels_.erase(xservice_addr);
+    GAUGE_SET(xservice_connected_services, xservice_stubs_.size());
     LOG(INFO) << "Disconnected from xservice: " << xservice_addr;
 
     // if master disconnected，need to update master address

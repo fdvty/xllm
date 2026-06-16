@@ -185,6 +185,8 @@ DECLARE_string(etcd_namespace);
 
 DECLARE_bool(enable_service_routing);
 
+DECLARE_bool(enable_peer_service);
+
 DECLARE_double(heart_beat_interval);
 
 DECLARE_int32(etcd_ttl);

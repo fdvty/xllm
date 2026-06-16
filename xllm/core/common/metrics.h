@@ -189,6 +189,13 @@ DECLARE_GAUGE(xllm_cpu_utilization);
 DECLARE_GAUGE(xllm_gpu_num);
 DECLARE_GAUGE(xllm_gpu_utilization);
 
+DECLARE_GAUGE(peer_service_enabled);
+DECLARE_GAUGE(xservice_connected_services);
+DECLARE_COUNTER(xservice_heartbeat_total);
+DECLARE_COUNTER(xservice_heartbeat_success_total);
+DECLARE_COUNTER(xservice_heartbeat_failure_total);
+DECLARE_COUNTER(xservice_heartbeat_xtensor_total);
+
 // latency of speculative execution in seconds
 DECLARE_COUNTER(speculative_execution_latency_seconds_draft);
 DECLARE_COUNTER(speculative_execution_latency_seconds_target);

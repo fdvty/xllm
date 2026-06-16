@@ -101,6 +101,7 @@ cc_library(
     absl::strings
     absl::synchronization
     absl::flat_hash_map
+    nlohmann_json::nlohmann_json
     proto::xllm_proto
     $<$<BOOL:${USE_MLU}>:torch_mlu>
     $<$<BOOL:${USE_DCU}>:hip::host>

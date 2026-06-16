@@ -47,6 +47,7 @@ class DistributedConfig final {
                                                     "etcd_addr",
                                                     "etcd_namespace",
                                                     "enable_service_routing",
+                                                    "enable_peer_service",
                                                     "heart_beat_interval",
                                                     "etcd_ttl"}};
     return kOptionCategory;
@@ -65,6 +66,10 @@ class DistributedConfig final {
   PROPERTY(std::string, etcd_namespace);
 
   PROPERTY(bool, enable_service_routing) = false;
+
+  // Phase 0 rollout switch for peer xllm-service architecture. Phase 0 only
+  // exposes and dumps the switch; Phase 1 changes XServiceClient behavior.
+  PROPERTY(bool, enable_peer_service) = false;
 
   PROPERTY(double, heart_beat_interval) = 0.5;
 

@@ -178,6 +178,7 @@ Options create_options(const std::string& instance_name, bool is_local) {
       .etcd_namespace(distributed_config.etcd_namespace())
       .enable_service_routing(distributed_config.enable_service_routing() ||
                               disagg_pd_config.enable_disagg_pd())
+      .enable_peer_service(distributed_config.enable_peer_service())
       .tool_call_parser(model_config.tool_call_parser())
       .reasoning_parser(model_config.reasoning_parser())
       .priority_strategy(scheduler_config.priority_strategy())

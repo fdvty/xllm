@@ -166,6 +166,8 @@ struct Options {
   // enable service routing mode.
   PROPERTY(bool, enable_service_routing) = false;
 
+  PROPERTY(bool, enable_peer_service) = false;
+
   PROPERTY(std::string, priority_strategy) = "fcfs";
 
   PROPERTY(bool, enable_online_preempt_offline) = true;

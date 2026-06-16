@@ -157,6 +157,8 @@ class Options {
 
   PROPERTY(bool, enable_service_routing) = false;
 
+  PROPERTY(bool, enable_peer_service) = false;
+
   PROPERTY(std::optional<std::string>, tool_call_parser);
 
   PROPERTY(std::optional<std::string>, reasoning_parser);

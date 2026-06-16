@@ -40,6 +40,20 @@ message InstanceMetaInfo {
 message KvCacheEvent {
     repeated bytes stored_cache = 1;
     repeated bytes removed_cache = 2;
+    repeated bytes offload_cache = 3;
+}
+
+enum KvCacheEventEnvelopeType {
+  KV_CACHE_EVENT_DELTA = 0;
+  KV_CACHE_EVENT_SNAPSHOT = 1;
+}
+
+message KvCacheEventEnvelope {
+  KvCacheEventEnvelopeType event_type = 1;
+  string incarnation_id = 2;
+  uint64 seq_no = 3;
+  uint64 publish_ts_ms = 4;
+  KvCacheEvent cache_event = 5;
 }
 
 message LoadMetrics {
