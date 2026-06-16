@@ -151,6 +151,11 @@ bool EtcdClient::get_all_xservices(const std::string& key_prefix,
   values->clear();
   values->reserve(response.keys().size());
   for (int i = 0; i < response.keys().size(); ++i) {
+    const std::string key =
+        response.key(i).substr(etcd_namespace_prefix_.size());
+    if (key == key_prefix + "MASTER") {
+      continue;
+    }
     values->emplace_back(response.value(i).as_string());
   }
 

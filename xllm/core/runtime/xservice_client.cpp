@@ -22,6 +22,7 @@ limitations under the License.
 #include <unistd.h>
 
 #include <algorithm>
+#include <iterator>
 #include <unordered_map>
 
 #include "core/common/metrics.h"
@@ -118,23 +119,31 @@ bool XServiceClient::init(const std::string& etcd_addr,
     etcd_client_ = std::make_unique<EtcdClient>(etcd_addr, etcd_namespace);
   }
 
-  // connect master xllm_service
-  while (!etcd_client_->get_master_service(ETCD_MASTER_SERVICE_KEY,
-                                           &master_xservice_addr_)) {
-    LOG(ERROR) << "Master service not set, wait 2s!";
-    sleep(2);
-  }
+  block_manager_pool_ = block_manager_pool;
+  const bool enable_peer_service =
+      ::xllm::DistributedConfig::get_instance().enable_peer_service();
 
-  if (!check_instance_name(master_xservice_addr_)) {
-    LOG(FATAL) << "Invalid master service name format, now only support "
-                  "`ip:port` style.";
-    return false;
-  }
+  if (enable_peer_service) {
+    LOG(INFO) << "Peer service mode enabled; skip master service discovery.";
+  } else {
+    // connect master xllm_service
+    while (!etcd_client_->get_master_service(ETCD_MASTER_SERVICE_KEY,
+                                             &master_xservice_addr_)) {
+      LOG(ERROR) << "Master service not set, wait 2s!";
+      sleep(2);
+    }
 
-  if (!connect_to_xservice(master_xservice_addr_)) {
-    LOG(FATAL) << "Fail to initialize connection to master xservice server "
-               << master_xservice_addr_;
-    return false;
+    if (!check_instance_name(master_xservice_addr_)) {
+      LOG(FATAL) << "Invalid master service name format, now only support "
+                    "`ip:port` style.";
+      return false;
+    }
+
+    if (!connect_to_xservice(master_xservice_addr_)) {
+      LOG(FATAL) << "Fail to initialize connection to master xservice server "
+                 << master_xservice_addr_;
+      return false;
+    }
   }
 
   // Get and connect to all existing xllm_service instances.
@@ -142,8 +151,8 @@ bool XServiceClient::init(const std::string& etcd_addr,
   if (etcd_client_->get_all_xservices(ETCD_XSERVICES_KEY_PREFIX,
                                       &all_services)) {
     for (const auto& service_addr : all_services) {
-      if (service_addr != master_xservice_addr_ &&
-          check_instance_name(service_addr)) {
+      if (check_instance_name(service_addr) &&
+          (enable_peer_service || service_addr != master_xservice_addr_)) {
         connect_to_xservice(service_addr);
       }
     }
@@ -155,12 +164,14 @@ bool XServiceClient::init(const std::string& etcd_addr,
   reconcile_thread_ = std::make_unique<std::thread>(
       &XServiceClient::reconcile_registration_loop, this);
 
-  // watch master xllm_service change
-  auto master_func = [this](const etcd::Response& response,
-                            uint64_t prefix_len) {
-    handle_master_service_watch(response, prefix_len);
-  };
-  etcd_client_->add_watch(ETCD_MASTER_SERVICE_KEY, master_func);
+  if (!enable_peer_service) {
+    // watch master xllm_service change
+    auto master_func = [this](const etcd::Response& response,
+                              uint64_t prefix_len) {
+      handle_master_service_watch(response, prefix_len);
+    };
+    etcd_client_->add_watch(ETCD_MASTER_SERVICE_KEY, master_func);
+  }
 
   // watch all xllm_service changes
   auto xservices_func = [this](const etcd::Response& response,
@@ -168,8 +179,6 @@ bool XServiceClient::init(const std::string& etcd_addr,
     handle_xservices_watch(response, prefix_len);
   };
   etcd_client_->add_watch(ETCD_XSERVICES_KEY_PREFIX, xservices_func);
-
-  block_manager_pool_ = block_manager_pool;
 
   initialize_done_ = true;
   return true;
@@ -294,23 +303,48 @@ void XServiceClient::register_instance(const InstanceInfo& instance_info) {
 InstanceInfo XServiceClient::get_instance_info(
     const std::string& instance_name) {
   InstanceInfo result;
-  brpc::Controller cntl;
   xllm_service::proto::InstanceID req;
-  xllm_service::proto::InstanceMetaInfo resp;
   req.set_name(instance_name);
 
-  std::string master_addr;
-  if (!with_master_stub(
-          [&](xllm_service::proto::XllmRpcService_Stub* master_stub) {
-            master_stub->GetInstanceInfo(&cntl, &req, &resp, nullptr);
-          },
-          &master_addr)) {
-    return result;
+  xllm_service::proto::InstanceMetaInfo resp;
+  std::string service_addr;
+  if (::xllm::DistributedConfig::get_instance().enable_peer_service()) {
+    if (!with_any_xservice_stub(
+            [&](xllm_service::proto::XllmRpcService_Stub* service_stub,
+                const std::string& addr) {
+              brpc::Controller cntl;
+              xllm_service::proto::InstanceMetaInfo candidate_resp;
+              service_stub->GetInstanceInfo(
+                  &cntl, &req, &candidate_resp, nullptr);
+              if (cntl.Failed()) {
+                LOG(ERROR) << "Fail to get instance info from xservice server "
+                           << addr << ", error text: " << cntl.ErrorText();
+                return false;
+              }
+              resp = std::move(candidate_resp);
+              return true;
+            },
+            &service_addr)) {
+      return result;
+    }
+  } else {
+    brpc::Controller cntl;
+    if (!with_master_stub(
+            [&](xllm_service::proto::XllmRpcService_Stub* master_stub) {
+              master_stub->GetInstanceInfo(&cntl, &req, &resp, nullptr);
+            },
+            &service_addr)) {
+      return result;
+    }
+
+    if (cntl.Failed()) {
+      LOG(ERROR) << "Fail to get instance info from xservice server "
+                 << service_addr << ", error text: " << cntl.ErrorText();
+      return result;
+    }
   }
 
-  if (cntl.Failed()) {
-    LOG(ERROR) << "Fail to get instance info from xservice server "
-               << master_addr << ", error text: " << cntl.ErrorText();
+  if (resp.name().empty()) {
     return result;
   }
   result.name = resp.name();
@@ -355,7 +389,6 @@ void XServiceClient::heartbeat() {
 
     if (block_manager_pool_ == nullptr || scheduler_ == nullptr) continue;
 
-    brpc::Controller cntl;
     xllm_service::proto::HeartbeatRequest req;
     req.set_name(instance_name_);
     req.set_incarnation_id(incarnation_id_);
@@ -422,6 +455,62 @@ void XServiceClient::heartbeat() {
       COUNTER_INC(xservice_heartbeat_xtensor_total);
     }
 
+    if (::xllm::DistributedConfig::get_instance().enable_peer_service()) {
+      struct AsyncHeartbeatContext {
+        std::string service_addr;
+        brpc::Controller cntl;
+        xllm_service::proto::Status resp;
+        bool issued = false;
+      };
+
+      std::vector<std::unique_ptr<AsyncHeartbeatContext>> contexts;
+      {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        contexts.reserve(xservice_stubs_.size());
+        for (const auto& pair : xservice_stubs_) {
+          auto ctx = std::make_unique<AsyncHeartbeatContext>();
+          ctx->service_addr = pair.first;
+          ctx->issued = true;
+          COUNTER_INC(xservice_heartbeat_total);
+          pair.second->Heartbeat(
+              &ctx->cntl, &req, &ctx->resp, brpc::DoNothing());
+          contexts.emplace_back(std::move(ctx));
+        }
+      }
+
+      if (contexts.empty()) {
+        static uint64_t no_peer_service_log_count = 0;
+        COUNTER_INC(xservice_heartbeat_failure_total);
+        if ((++no_peer_service_log_count % 100) == 1) {
+          LOG(ERROR) << "No xservice stub available for peer heartbeat.";
+        }
+        continue;
+      }
+
+      for (auto& ctx : contexts) {
+        if (ctx->issued) {
+          brpc::Join(ctx->cntl.call_id());
+        }
+      }
+
+      for (auto& ctx : contexts) {
+        if (ctx->cntl.Failed()) {
+          COUNTER_INC(xservice_heartbeat_failure_total);
+          LOG(ERROR) << "Failed to send heartbeat to xservice "
+                     << ctx->service_addr
+                     << ", error msg is: " << ctx->cntl.ErrorText();
+        } else if (!ctx->resp.ok()) {
+          COUNTER_INC(xservice_heartbeat_failure_total);
+          LOG(ERROR) << "Failed to send heartbeat to xservice "
+                     << ctx->service_addr;
+        } else {
+          COUNTER_INC(xservice_heartbeat_success_total);
+        }
+      }
+      continue;
+    }
+
+    brpc::Controller cntl;
     xllm_service::proto::Status resp;
     std::string master_addr;
     COUNTER_INC(xservice_heartbeat_total);
@@ -449,47 +538,92 @@ void XServiceClient::heartbeat() {
 }
 
 std::vector<std::string> XServiceClient::get_static_decode_list() {
-  brpc::Controller cntl;
   xllm_service::proto::InstanceID req;
   xllm_service::proto::InstanceIDs resp;
   req.set_name(instance_name_);
 
-  std::string master_addr;
-  if (!with_master_stub(
-          [&](xllm_service::proto::XllmRpcService_Stub* master_stub) {
-            master_stub->GetStaticDecodeList(&cntl, &req, &resp, nullptr);
-          },
-          &master_addr)) {
-    return {};
-  }
+  std::string service_addr;
+  if (::xllm::DistributedConfig::get_instance().enable_peer_service()) {
+    if (!with_any_xservice_stub(
+            [&](xllm_service::proto::XllmRpcService_Stub* service_stub,
+                const std::string& addr) {
+              brpc::Controller cntl;
+              xllm_service::proto::InstanceIDs candidate_resp;
+              service_stub->GetStaticDecodeList(
+                  &cntl, &req, &candidate_resp, nullptr);
+              if (cntl.Failed()) {
+                LOG(ERROR)
+                    << "Fail to get static decode list from xservice server "
+                    << addr << ", error text: " << cntl.ErrorText();
+                return false;
+              }
+              resp = std::move(candidate_resp);
+              return true;
+            },
+            &service_addr)) {
+      return {};
+    }
+  } else {
+    brpc::Controller cntl;
+    if (!with_master_stub(
+            [&](xllm_service::proto::XllmRpcService_Stub* master_stub) {
+              master_stub->GetStaticDecodeList(&cntl, &req, &resp, nullptr);
+            },
+            &service_addr)) {
+      return {};
+    }
 
-  if (cntl.Failed()) {
-    LOG(ERROR) << "Fail to get static decode list from master xservice server "
-               << master_addr << ", error text: " << cntl.ErrorText();
-    return {};
+    if (cntl.Failed()) {
+      LOG(ERROR) << "Fail to get static decode list from master xservice server "
+                 << service_addr << ", error text: " << cntl.ErrorText();
+      return {};
+    }
   }
   return std::vector<std::string>(resp.names().begin(), resp.names().end());
 }
 
 std::vector<std::string> XServiceClient::get_static_prefill_list() {
-  brpc::Controller cntl;
   xllm_service::proto::InstanceID req;
   xllm_service::proto::InstanceIDs resp;
   req.set_name(instance_name_);
 
-  std::string master_addr;
-  if (!with_master_stub(
-          [&](xllm_service::proto::XllmRpcService_Stub* master_stub) {
-            master_stub->GetStaticPrefillList(&cntl, &req, &resp, nullptr);
-          },
-          &master_addr)) {
-    return {};
-  }
+  std::string service_addr;
+  if (::xllm::DistributedConfig::get_instance().enable_peer_service()) {
+    if (!with_any_xservice_stub(
+            [&](xllm_service::proto::XllmRpcService_Stub* service_stub,
+                const std::string& addr) {
+              brpc::Controller cntl;
+              xllm_service::proto::InstanceIDs candidate_resp;
+              service_stub->GetStaticPrefillList(
+                  &cntl, &req, &candidate_resp, nullptr);
+              if (cntl.Failed()) {
+                LOG(ERROR)
+                    << "Fail to get static prefill list from xservice server "
+                    << addr << ", error text: " << cntl.ErrorText();
+                return false;
+              }
+              resp = std::move(candidate_resp);
+              return true;
+            },
+            &service_addr)) {
+      return {};
+    }
+  } else {
+    brpc::Controller cntl;
+    if (!with_master_stub(
+            [&](xllm_service::proto::XllmRpcService_Stub* master_stub) {
+              master_stub->GetStaticPrefillList(&cntl, &req, &resp, nullptr);
+            },
+            &service_addr)) {
+      return {};
+    }
 
-  if (cntl.Failed()) {
-    LOG(ERROR) << "Fail to get static prefill list from master xservice server "
-               << master_addr << ", error text: " << cntl.ErrorText();
-    return {};
+    if (cntl.Failed()) {
+      LOG(ERROR)
+          << "Fail to get static prefill list from master xservice server "
+          << service_addr << ", error text: " << cntl.ErrorText();
+      return {};
+    }
   }
   return std::vector<std::string>(resp.names().begin(), resp.names().end());
 }
@@ -513,6 +647,8 @@ nlohmann::json XServiceClient::debug_summary() {
   nlohmann::json summary;
   summary["instance_name"] = instance_name_;
   summary["incarnation_id"] = incarnation_id_;
+  summary["enable_peer_service"] =
+      ::xllm::DistributedConfig::get_instance().enable_peer_service();
   summary["master_xservice_addr"] = master_xservice_addr_;
   summary["connected_service_count"] = xservice_stubs_.size();
   summary["connected_services"] = std::move(connected_services);
@@ -522,10 +658,14 @@ nlohmann::json XServiceClient::debug_summary() {
 std::vector<bool> XServiceClient::generations(
     const std::vector<RequestOutput>& outputs) {
   std::vector<bool> results(outputs.size(), false);
-  std::string master_addr;
-  {
+  const bool enable_peer_service =
+      ::xllm::DistributedConfig::get_instance().enable_peer_service();
+  std::string default_service_addr;
+  if (enable_peer_service) {
+    get_any_xservice_addr(&default_service_addr);
+  } else {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    master_addr = master_xservice_addr_;
+    default_service_addr = master_xservice_addr_;
   }
 
   // group requests by target xllm_service
@@ -545,7 +685,7 @@ std::vector<bool> XServiceClient::generations(
 
   for (size_t i = 0; i < outputs.size(); ++i) {
     const auto& output = outputs[i];
-    std::string target_service = master_addr;
+    std::string target_service = default_service_addr;
     if (!output.target_xservice_addr.empty()) {
       target_service = output.target_xservice_addr;
     }
@@ -792,6 +932,72 @@ bool XServiceClient::with_master_stub(
   return false;
 }
 
+bool XServiceClient::with_any_xservice_stub(
+    const std::function<bool(
+        xllm_service::proto::XllmRpcService_Stub*,
+        const std::string& xservice_addr)>& fn,
+    std::string* xservice_addr) {
+  if (xservice_addr == nullptr) {
+    return false;
+  }
+
+  static std::atomic<uint64_t> no_service_log_count{0};
+  size_t service_count = 0;
+  {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    service_count = xservice_stubs_.size();
+  }
+  if (service_count == 0) {
+    const uint64_t count =
+        no_service_log_count.fetch_add(1, std::memory_order_relaxed);
+    if (count % 100 == 0) {
+      LOG(ERROR) << "No xservice stub available.";
+    }
+    return false;
+  }
+
+  const size_t start =
+      next_xservice_index_.fetch_add(1, std::memory_order_relaxed);
+  for (size_t attempt = 0; attempt < service_count; ++attempt) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    if (xservice_stubs_.empty()) {
+      return false;
+    }
+
+    auto iter = xservice_stubs_.begin();
+    std::advance(iter, (start + attempt) % xservice_stubs_.size());
+    if (iter->second == nullptr) {
+      continue;
+    }
+
+    *xservice_addr = iter->first;
+    if (fn(iter->second.get(), iter->first)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool XServiceClient::get_any_xservice_addr(std::string* xservice_addr) {
+  if (xservice_addr == nullptr) {
+    return false;
+  }
+
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  if (xservice_stubs_.empty()) {
+    return false;
+  }
+
+  const size_t index =
+      next_xservice_index_.fetch_add(1, std::memory_order_relaxed) %
+      xservice_stubs_.size();
+  auto iter = xservice_stubs_.begin();
+  std::advance(iter, index);
+  *xservice_addr = iter->first;
+  return true;
+}
+
 xllm_service::proto::XllmRpcService_Stub* XServiceClient::find_stub_locked(
     const std::string& xservice_addr) {
   auto it = xservice_stubs_.find(xservice_addr);
@@ -897,14 +1103,18 @@ void XServiceClient::handle_xservices_watch(const etcd::Response& response,
     }
 
     if (event.event_type() == etcd::Event::EventType::PUT) {
-      std::string master_xservice_addr;
-      {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
-        master_xservice_addr = master_xservice_addr_;
-      }
-
-      if (service_addr != master_xservice_addr) {
+      if (::xllm::DistributedConfig::get_instance().enable_peer_service()) {
         connect_to_xservice(service_addr);
+      } else {
+        std::string master_xservice_addr;
+        {
+          std::shared_lock<std::shared_mutex> lock(mutex_);
+          master_xservice_addr = master_xservice_addr_;
+        }
+
+        if (service_addr != master_xservice_addr) {
+          connect_to_xservice(service_addr);
+        }
       }
     } else if (event.event_type() == etcd::Event::EventType::DELETE_) {
       disconnect_xservice(service_addr);

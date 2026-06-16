@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <shared_mutex>
@@ -89,6 +90,15 @@ class XServiceClient {
       const std::function<void(xllm_service::proto::XllmRpcService_Stub*)>& fn,
       std::string* master_addr);
 
+  // call rpc with one available peer xllm_service stub atomically.
+  bool with_any_xservice_stub(
+      const std::function<bool(
+          xllm_service::proto::XllmRpcService_Stub*,
+          const std::string& xservice_addr)>& fn,
+      std::string* xservice_addr);
+
+  bool get_any_xservice_addr(std::string* xservice_addr);
+
   // find stub by address, caller should hold mutex_
   xllm_service::proto::XllmRpcService_Stub* find_stub_locked(
       const std::string& xservice_addr);
@@ -105,6 +115,7 @@ class XServiceClient {
   std::string registration_value_;
 
   std::string master_xservice_addr_;
+  std::atomic_size_t next_xservice_index_{0};
   std::unordered_map<std::string, std::unique_ptr<brpc::Channel>>
       xservice_channels_;
   std::unordered_map<std::string,
