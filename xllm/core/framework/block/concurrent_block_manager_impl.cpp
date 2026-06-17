@@ -58,6 +58,18 @@ size_t ConcurrentBlockManagerImpl::num_blocks_in_prefix_cache() const {
   return BlockManagerImpl::num_blocks_in_prefix_cache();
 }
 
+void ConcurrentBlockManagerImpl::get_merged_kvcache_event(
+    KvCacheEvent* event) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  BlockManagerImpl::get_merged_kvcache_event(event);
+}
+
+void ConcurrentBlockManagerImpl::get_kvcache_snapshot(
+    KvCacheEvent* event) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  BlockManagerImpl::get_kvcache_snapshot(event);
+}
+
 size_t ConcurrentBlockManagerImpl::num_free_blocks() const {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
   return BlockManagerImpl::num_free_blocks();

@@ -101,6 +101,7 @@ class PrefixCache {
   }
 
   virtual KvCacheEvent* get_upload_kvcache_events() { return nullptr; }
+  virtual void get_kvcache_snapshot(KvCacheEvent* event) const;
 
   static uint32_t compute_hash_keys(const Slice<int32_t>& token_ids,
                                     std::vector<Block>& blocks,

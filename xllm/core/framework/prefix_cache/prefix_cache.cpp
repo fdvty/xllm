@@ -108,6 +108,17 @@ size_t PrefixCache::evict(size_t n_blocks) {
   return evict(n_blocks, &evict_keys);
 }
 
+void PrefixCache::get_kvcache_snapshot(KvCacheEvent* event) const {
+  if (event == nullptr) {
+    return;
+  }
+  event->stored_cache.reserve(event->stored_cache.size() +
+                              cached_blocks_.size());
+  for (const auto& iter : cached_blocks_) {
+    event->stored_cache.insert(iter.first);
+  }
+}
+
 size_t PrefixCache::insert(const Slice<int32_t>& token_ids,
                            std::vector<Block>& blocks,
                            size_t existed_shared_blocks_num,

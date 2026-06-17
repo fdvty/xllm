@@ -52,6 +52,7 @@ class DistributedConfig final {
                                                     "kv_event_zmq_port",
                                                     "kv_event_zmq_port_offset",
                                                     "kv_event_zmq_publish_interval_ms",
+                                                    "kv_event_zmq_snapshot_interval_ms",
                                                     "heart_beat_interval",
                                                     "etcd_ttl"}};
     return kOptionCategory;
@@ -82,6 +83,8 @@ class DistributedConfig final {
   PROPERTY(int32_t, kv_event_zmq_port_offset) = 10000;
 
   PROPERTY(int32_t, kv_event_zmq_publish_interval_ms) = 50;
+
+  PROPERTY(int32_t, kv_event_zmq_snapshot_interval_ms) = 60000;
 
   PROPERTY(double, heart_beat_interval) = 0.5;
 

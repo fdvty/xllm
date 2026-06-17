@@ -26,6 +26,10 @@ struct KvCacheEvent {
   std::unordered_set<XXH3Key, FixedStringKeyHash, FixedStringKeyEqual>
       removed_cache;
 
+  bool empty() const {
+    return stored_cache.empty() && removed_cache.empty();
+  }
+
   void clear() {
     stored_cache.clear();
     removed_cache.clear();

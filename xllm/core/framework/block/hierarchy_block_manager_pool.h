@@ -67,6 +67,7 @@ class HierarchyBlockManagerPool : public BlockManagerPool {
                               const uint32_t timeout) override;
 
   void get_merged_kvcache_event(KvCacheEvent* event) const override;
+  void get_kvcache_snapshot(KvCacheEvent* event) const override;
 
  private:
   void allocate_host_shared(Sequence* sequence);

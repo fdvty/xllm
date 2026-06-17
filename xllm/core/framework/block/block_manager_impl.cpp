@@ -141,6 +141,7 @@ bool BlockManagerImpl::has_enough_blocks(uint32_t num_blocks) {
   const uint32_t n_blocks_to_evict = num_blocks - num_free_blocks_;
 
   AUTO_COUNTER(prefix_cache_latency_seconds_evict);
+  std::lock_guard<std::recursive_mutex> lock(prefix_cache_mutex_);
   const uint32_t n_blocks_evicted = prefix_cache_->evict(n_blocks_to_evict);
   if (n_blocks_evicted < n_blocks_to_evict) {
     return false;
@@ -164,6 +165,7 @@ std::vector<Block> BlockManagerImpl::allocate_shared(
   if (options_.enable_prefix_cache()) {
     AUTO_COUNTER(prefix_cache_latency_seconds_match);
 
+    std::lock_guard<std::recursive_mutex> lock(prefix_cache_mutex_);
     std::vector<Block> shared_blocks =
         prefix_cache_->match(token_ids, existed_shared_blocks, mm_data);
 
@@ -190,6 +192,7 @@ void BlockManagerImpl::cache(const Slice<int32_t>& token_ids,
   if (options_.enable_prefix_cache()) {
     AUTO_COUNTER(prefix_cache_latency_seconds_insert);
     // Add the kv cache to the prefix cache
+    std::lock_guard<std::recursive_mutex> lock(prefix_cache_mutex_);
     prefix_cache_->insert(
         token_ids, blocks, existed_shared_blocks_num, mm_data);
   }
@@ -199,17 +202,32 @@ void BlockManagerImpl::cache(const std::vector<Block>& blocks) {
   if (options_.enable_prefix_cache()) {
     AUTO_COUNTER(prefix_cache_latency_seconds_insert);
     // Add the kv cache to the prefix cache
+    std::lock_guard<std::recursive_mutex> lock(prefix_cache_mutex_);
     prefix_cache_->insert(blocks);
   }
 }
 
 void BlockManagerImpl::get_merged_kvcache_event(KvCacheEvent* event) const {
+  if (!options_.enable_prefix_cache() || prefix_cache_ == nullptr ||
+      event == nullptr) {
+    return;
+  }
+  std::lock_guard<std::recursive_mutex> lock(prefix_cache_mutex_);
   auto events = prefix_cache_->get_upload_kvcache_events();
   if (events != nullptr) {
     event->removed_cache.merge(events->removed_cache);
     event->stored_cache.merge(events->stored_cache);
     events->clear();
   }
+}
+
+void BlockManagerImpl::get_kvcache_snapshot(KvCacheEvent* event) const {
+  if (!options_.enable_prefix_cache() || prefix_cache_ == nullptr ||
+      event == nullptr) {
+    return;
+  }
+  std::lock_guard<std::recursive_mutex> lock(prefix_cache_mutex_);
+  prefix_cache_->get_kvcache_snapshot(event);
 }
 
 // allocate a block id

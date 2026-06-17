@@ -49,9 +49,11 @@ class BlockManagerImpl : public BlockManager {
   void cache(const std::vector<Block>& blocks) override;
 
   void get_merged_kvcache_event(KvCacheEvent* event) const override;
+  void get_kvcache_snapshot(KvCacheEvent* event) const override;
 
   size_t num_blocks_in_prefix_cache() const override {
     if (options_.enable_prefix_cache()) {
+      std::lock_guard<std::recursive_mutex> lock(prefix_cache_mutex_);
       CHECK(prefix_cache_);
       return prefix_cache_->num_blocks();
     }
@@ -87,6 +89,8 @@ class BlockManagerImpl : public BlockManager {
   bool has_enough_blocks(uint32_t num_blocks);
 
  private:
+  mutable std::recursive_mutex prefix_cache_mutex_;
+
   // prefix cache
   std::unique_ptr<PrefixCache> prefix_cache_;
 

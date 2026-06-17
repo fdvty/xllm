@@ -197,6 +197,7 @@ DECLARE_COUNTER(xservice_heartbeat_failure_total);
 DECLARE_COUNTER(xservice_heartbeat_xtensor_total);
 DECLARE_COUNTER(kv_event_zmq_publish_total);
 DECLARE_COUNTER(kv_event_zmq_publish_failure_total);
+DECLARE_COUNTER(kv_event_zmq_snapshot_publish_total);
 
 // latency of speculative execution in seconds
 DECLARE_COUNTER(speculative_execution_latency_seconds_draft);

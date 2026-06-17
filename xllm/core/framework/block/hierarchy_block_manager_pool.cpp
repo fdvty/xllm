@@ -357,11 +357,28 @@ void HierarchyBlockManagerPool::transfer_blocks() {
 
 void HierarchyBlockManagerPool::get_merged_kvcache_event(
     KvCacheEvent* event) const {
+  if (event == nullptr) {
+    return;
+  }
   if (host_block_managers_.empty()) {
     BlockManagerPool::get_merged_kvcache_event(event);
   } else {
     for (int32_t i = 0; i < host_block_managers_.size(); ++i) {
       host_block_managers_[i]->get_merged_kvcache_event(event);
+    }
+  }
+}
+
+void HierarchyBlockManagerPool::get_kvcache_snapshot(
+    KvCacheEvent* event) const {
+  if (event == nullptr) {
+    return;
+  }
+  if (host_block_managers_.empty()) {
+    BlockManagerPool::get_kvcache_snapshot(event);
+  } else {
+    for (int32_t i = 0; i < host_block_managers_.size(); ++i) {
+      host_block_managers_[i]->get_kvcache_snapshot(event);
     }
   }
 }

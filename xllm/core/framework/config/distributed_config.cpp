@@ -64,6 +64,10 @@ DEFINE_int32(kv_event_zmq_publish_interval_ms,
              50,
              "KV cache event ZMQ publish loop interval in milliseconds.");
 
+DEFINE_int32(kv_event_zmq_snapshot_interval_ms,
+             60000,
+             "KV cache event ZMQ full snapshot interval in milliseconds.");
+
 DEFINE_double(heart_beat_interval, 0.5, "Heart beat interval.");
 
 DEFINE_int32(etcd_ttl, 3, "Time to live for etcd.");
@@ -83,6 +87,7 @@ void DistributedConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_port);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_port_offset);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_publish_interval_ms);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_snapshot_interval_ms);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(heart_beat_interval);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(etcd_ttl);
 }
@@ -101,6 +106,7 @@ void DistributedConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_port);
   XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_port_offset);
   XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_publish_interval_ms);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_snapshot_interval_ms);
   XLLM_CONFIG_ASSIGN_FROM_JSON(heart_beat_interval);
   XLLM_CONFIG_ASSIGN_FROM_JSON(etcd_ttl);
 }
@@ -132,6 +138,8 @@ void DistributedConfig::append_config_json(
       config_json, default_config, kv_event_zmq_port_offset);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, kv_event_zmq_publish_interval_ms);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_event_zmq_snapshot_interval_ms);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, heart_beat_interval);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(

@@ -39,6 +39,7 @@ class KvEventPublisher final {
     PROPERTY(std::string, public_endpoint);
     PROPERTY(int32_t, port) = 0;
     PROPERTY(int32_t, publish_interval_ms) = 50;
+    PROPERTY(int32_t, snapshot_interval_ms) = 60000;
     PROPERTY(const BlockManagerPool*, block_manager_pool) = nullptr;
   };
 

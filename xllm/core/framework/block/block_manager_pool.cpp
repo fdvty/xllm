@@ -412,8 +412,20 @@ void BlockManagerPool::cache(Sequence* sequence) {
 }
 
 void BlockManagerPool::get_merged_kvcache_event(KvCacheEvent* event) const {
+  if (event == nullptr) {
+    return;
+  }
   for (int32_t i = 0; i < block_managers_.size(); ++i) {
     block_managers_[i]->get_merged_kvcache_event(event);
+  }
+}
+
+void BlockManagerPool::get_kvcache_snapshot(KvCacheEvent* event) const {
+  if (event == nullptr) {
+    return;
+  }
+  for (int32_t i = 0; i < block_managers_.size(); ++i) {
+    block_managers_[i]->get_kvcache_snapshot(event);
   }
 }
 

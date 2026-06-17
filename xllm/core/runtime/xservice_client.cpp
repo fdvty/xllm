@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "core/common/metrics.h"
 #include "core/framework/config/distributed_config.h"
+#include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/service_config.h"
 #include "util/env_var.h"
 #include "util/hash_util.h"
@@ -278,6 +279,8 @@ void XServiceClient::maybe_start_kv_event_publisher(
       .port(port)
       .publish_interval_ms(
           distributed_config.kv_event_zmq_publish_interval_ms())
+      .snapshot_interval_ms(
+          distributed_config.kv_event_zmq_snapshot_interval_ms())
       .block_manager_pool(block_manager_pool_);
   kv_event_publisher_ = std::make_unique<KvEventPublisher>(std::move(options));
   if (!kv_event_publisher_->start()) {
@@ -333,6 +336,14 @@ void XServiceClient::register_instance(const InstanceInfo& instance_info) {
     registered_info.register_ts_ms =
         static_cast<uint64_t>(absl::ToUnixMillis(absl::Now()));
   }
+  if (block_manager_pool_ != nullptr) {
+    registered_info.block_size = block_manager_pool_->options().block_size();
+  } else {
+    registered_info.block_size =
+        ::xllm::KVCacheConfig::get_instance().block_size();
+  }
+  registered_info.xxh3_128bits_seed =
+      ::xllm::KVCacheConfig::get_instance().xxh3_128bits_seed();
 
   std::string key_prefix = "";
   if (InstanceRole(registered_info.type) == InstanceRole::DEFAULT) {
@@ -443,6 +454,8 @@ InstanceInfo XServiceClient::get_instance_info(
   if (resp.kv_split_size() > 0) {
     result.kv_split_size = resp.kv_split_size();
   }
+  result.block_size = resp.block_size();
+  result.xxh3_128bits_seed = resp.xxh3_128bits_seed();
   for (auto& port : resp.ports()) {
     result.ports.emplace_back(port);
   }

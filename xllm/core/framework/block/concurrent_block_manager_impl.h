@@ -46,6 +46,9 @@ class ConcurrentBlockManagerImpl : public BlockManagerImpl {
   // get the number of blocks in the prefix cache
   size_t num_blocks_in_prefix_cache() const override;
 
+  void get_merged_kvcache_event(KvCacheEvent* event) const override;
+  void get_kvcache_snapshot(KvCacheEvent* event) const override;
+
   // get the number of free blocks in the block allocator
   size_t num_free_blocks() const override;
 

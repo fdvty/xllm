@@ -56,6 +56,8 @@ class XTensorManagerPool final : public KVCacheManager {
 
   void allocate_shared(Sequence* sequence) override { NOT_IMPLEMENTED(); }
 
+  void get_kvcache_snapshot(KvCacheEvent* /*event*/) const override {}
+
   std::vector<std::vector<BlockTransferInfo>>* get_swap_block_transfer_infos()
       override {
     NOT_IMPLEMENTED();

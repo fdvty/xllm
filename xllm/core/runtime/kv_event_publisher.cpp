@@ -48,6 +48,32 @@ void fill_proto_cache_event(const KvCacheEvent& event,
   }
 }
 
+bool publish_envelope(zmq::socket_t* publisher,
+                      const std::string& instance_name,
+                      const xllm_service::proto::KvCacheEventEnvelope&
+                          envelope) {
+  std::string payload;
+  if (!envelope.SerializeToString(&payload)) {
+    LOG(ERROR) << "Failed to serialize KV cache event envelope, instance: "
+               << instance_name;
+    return false;
+  }
+
+  try {
+    zmq::message_t topic(instance_name.data(), instance_name.size());
+    zmq::message_t body(payload.data(), payload.size());
+    publisher->send(topic, zmq::send_flags::sndmore);
+    publisher->send(body, zmq::send_flags::none);
+    COUNTER_INC(kv_event_zmq_publish_total);
+    return true;
+  } catch (const zmq::error_t& e) {
+    COUNTER_INC(kv_event_zmq_publish_failure_total);
+    LOG(ERROR) << "Failed to publish KV cache event, instance: "
+               << instance_name << ", error: " << e.what();
+    return false;
+  }
+}
+
 }  // namespace
 
 KvEventPublisher::KvEventPublisher(Options options)
@@ -106,6 +132,7 @@ nlohmann::json KvEventPublisher::debug_summary() const {
   summary["endpoint"] = options_.public_endpoint();
   summary["next_seq_no"] = next_seq_no_.load();
   summary["publish_interval_ms"] = options_.publish_interval_ms();
+  summary["snapshot_interval_ms"] = options_.snapshot_interval_ms();
   return summary;
 }
 
@@ -141,13 +168,37 @@ void KvEventPublisher::publish_loop() {
 
   const auto interval = std::chrono::milliseconds(
       std::max<int32_t>(1, options_.publish_interval_ms()));
+  const int32_t snapshot_interval_ms = options_.snapshot_interval_ms();
+  const bool snapshot_enabled = snapshot_interval_ms > 0;
+  const auto snapshot_interval =
+      std::chrono::milliseconds(std::max<int32_t>(1, snapshot_interval_ms));
+  auto last_snapshot_time = std::chrono::steady_clock::now();
 
   while (!exited_.load()) {
     std::this_thread::sleep_for(interval);
 
+    const auto now = std::chrono::steady_clock::now();
+    if (snapshot_enabled && now - last_snapshot_time >= snapshot_interval) {
+      last_snapshot_time = now;
+      KvCacheEvent snapshot_event;
+      options_.block_manager_pool()->get_kvcache_snapshot(&snapshot_event);
+
+      xllm_service::proto::KvCacheEventEnvelope envelope;
+      envelope.set_event_type(xllm_service::proto::KV_CACHE_EVENT_SNAPSHOT);
+      envelope.set_incarnation_id(options_.incarnation_id());
+      envelope.set_seq_no(next_seq_no_.fetch_add(1, std::memory_order_relaxed));
+      envelope.set_publish_ts_ms(
+          static_cast<uint64_t>(absl::ToUnixMillis(absl::Now())));
+      fill_proto_cache_event(snapshot_event, envelope.mutable_cache_event());
+
+      if (publish_envelope(&publisher, options_.instance_name(), envelope)) {
+        COUNTER_INC(kv_event_zmq_snapshot_publish_total);
+      }
+    }
+
     KvCacheEvent event;
     options_.block_manager_pool()->get_merged_kvcache_event(&event);
-    if (event.stored_cache.empty() && event.removed_cache.empty()) {
+    if (event.empty()) {
       continue;
     }
 
@@ -158,26 +209,7 @@ void KvEventPublisher::publish_loop() {
     envelope.set_publish_ts_ms(
         static_cast<uint64_t>(absl::ToUnixMillis(absl::Now())));
     fill_proto_cache_event(event, envelope.mutable_cache_event());
-
-    std::string payload;
-    if (!envelope.SerializeToString(&payload)) {
-      LOG(ERROR) << "Failed to serialize KV cache event envelope, instance: "
-                 << options_.instance_name();
-      continue;
-    }
-
-    try {
-      zmq::message_t topic(options_.instance_name().data(),
-                           options_.instance_name().size());
-      zmq::message_t body(payload.data(), payload.size());
-      publisher.send(topic, zmq::send_flags::sndmore);
-      publisher.send(body, zmq::send_flags::none);
-      COUNTER_INC(kv_event_zmq_publish_total);
-    } catch (const zmq::error_t& e) {
-      COUNTER_INC(kv_event_zmq_publish_failure_total);
-      LOG(ERROR) << "Failed to publish KV cache event, instance: "
-                 << options_.instance_name() << ", error: " << e.what();
-    }
+    publish_envelope(&publisher, options_.instance_name(), envelope);
   }
 
   publisher.close();

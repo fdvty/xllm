@@ -36,6 +36,8 @@ message InstanceMetaInfo {
   uint64 register_ts_ms = 12;
   int32 kv_split_size = 13;
   string zmq_endpoint = 14;
+  int32 block_size = 15;
+  uint32 xxh3_128bits_seed = 16;
 }
 
 message KvCacheEvent {

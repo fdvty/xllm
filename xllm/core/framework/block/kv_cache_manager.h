@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "common/macros.h"
 #include "framework/batch/batch.h"
+#include "framework/kv_cache/kv_cache_event.h"
 #include "framework/model/model_input_params.h"
 #include "framework/request/request.h"
 #include "framework/request/sequence.h"
@@ -55,6 +56,8 @@ class KVCacheManager {
 
   virtual void allocate_shared(Sequence* sequence) = 0;
   virtual void cache(Sequence* sequence) = 0;
+
+  virtual void get_kvcache_snapshot(KvCacheEvent* event) const = 0;
 
   virtual std::vector<std::vector<BlockTransferInfo>>*
   get_swap_block_transfer_infos() = 0;

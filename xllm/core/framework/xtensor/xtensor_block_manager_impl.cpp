@@ -267,11 +267,13 @@ void XTensorBlockManagerImpl::cache(const std::vector<Block>& /*blocks*/) {
 }
 
 void XTensorBlockManagerImpl::get_merged_kvcache_event(
-    KvCacheEvent* event) const {
+    KvCacheEvent* /*event*/) const {
   // Not implemented for XTensor
-  if (event != nullptr) {
-    event->clear();
-  }
+}
+
+void XTensorBlockManagerImpl::get_kvcache_snapshot(
+    KvCacheEvent* /*event*/) const {
+  // Prefix cache is not supported for XTensor.
 }
 
 size_t XTensorBlockManagerImpl::num_free_blocks() const {

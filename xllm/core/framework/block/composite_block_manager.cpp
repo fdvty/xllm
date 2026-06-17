@@ -292,8 +292,20 @@ void CompositeBlockManager::cache(const std::vector<Block>& /*blocks*/) {
 
 void CompositeBlockManager::get_merged_kvcache_event(
     KvCacheEvent* event) const {
+  if (event == nullptr) {
+    return;
+  }
   for (const auto& mgr : sub_managers_) {
     mgr->get_merged_kvcache_event(event);
+  }
+}
+
+void CompositeBlockManager::get_kvcache_snapshot(KvCacheEvent* event) const {
+  if (event == nullptr) {
+    return;
+  }
+  for (const auto& mgr : sub_managers_) {
+    mgr->get_kvcache_snapshot(event);
   }
 }
 
