@@ -301,6 +301,8 @@ find_package(leveldb CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
+find_package(ZeroMQ CONFIG REQUIRED)
+find_package(cppzmq CONFIG REQUIRED)
 # Ensure vcpkg protobuf headers are found before PyTorch's bundled older version.
 # Use BEFORE SYSTEM so that:
 #   1) vcpkg protobuf is first in -isystem list (before torch's -isystem)

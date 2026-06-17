@@ -166,6 +166,10 @@ DEFINE_COUNTER(xservice_heartbeat_failure_total,
                "Total number of failed xllm-service heartbeats");
 DEFINE_COUNTER(xservice_heartbeat_xtensor_total,
                "Total number of xllm-service heartbeats with XTensor info");
+DEFINE_COUNTER(kv_event_zmq_publish_total,
+               "Total number of KV cache events published through ZMQ");
+DEFINE_COUNTER(kv_event_zmq_publish_failure_total,
+               "Total number of failed KV cache event ZMQ publishes");
 
 // speculative metrics
 DEFINE_COUNTER(speculative_execution_latency_seconds_draft,

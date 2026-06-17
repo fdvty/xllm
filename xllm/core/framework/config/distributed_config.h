@@ -48,6 +48,10 @@ class DistributedConfig final {
                                                     "etcd_namespace",
                                                     "enable_service_routing",
                                                     "enable_peer_service",
+                                                    "kv_event_zmq_enable",
+                                                    "kv_event_zmq_port",
+                                                    "kv_event_zmq_port_offset",
+                                                    "kv_event_zmq_publish_interval_ms",
                                                     "heart_beat_interval",
                                                     "etcd_ttl"}};
     return kOptionCategory;
@@ -70,6 +74,14 @@ class DistributedConfig final {
   // Phase 0 rollout switch for peer xllm-service architecture. Phase 0 only
   // exposes and dumps the switch; Phase 1 changes XServiceClient behavior.
   PROPERTY(bool, enable_peer_service) = false;
+
+  PROPERTY(bool, kv_event_zmq_enable) = false;
+
+  PROPERTY(int32_t, kv_event_zmq_port) = 0;
+
+  PROPERTY(int32_t, kv_event_zmq_port_offset) = 10000;
+
+  PROPERTY(int32_t, kv_event_zmq_publish_interval_ms) = 50;
 
   PROPERTY(double, heart_beat_interval) = 0.5;
 

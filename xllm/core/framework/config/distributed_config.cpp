@@ -47,6 +47,23 @@ DEFINE_bool(enable_peer_service,
             "Enable peer-service rollout mode. Phase 0 only exposes the switch "
             "without changing XServiceClient behavior.");
 
+DEFINE_bool(kv_event_zmq_enable,
+            false,
+            "Publish KV cache events through a per-instance ZMQ PUB socket.");
+
+DEFINE_int32(kv_event_zmq_port,
+             0,
+             "KV cache event ZMQ PUB port. 0 means service port plus offset.");
+
+DEFINE_int32(kv_event_zmq_port_offset,
+             10000,
+             "Offset from service port for KV cache event ZMQ PUB port when "
+             "kv_event_zmq_port is not set.");
+
+DEFINE_int32(kv_event_zmq_publish_interval_ms,
+             50,
+             "KV cache event ZMQ publish loop interval in milliseconds.");
+
 DEFINE_double(heart_beat_interval, 0.5, "Heart beat interval.");
 
 DEFINE_int32(etcd_ttl, 3, "Time to live for etcd.");
@@ -62,6 +79,10 @@ void DistributedConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(etcd_namespace);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_service_routing);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_peer_service);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_enable);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_port);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_port_offset);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(kv_event_zmq_publish_interval_ms);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(heart_beat_interval);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(etcd_ttl);
 }
@@ -76,6 +97,10 @@ void DistributedConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(etcd_namespace);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_service_routing);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_peer_service);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_enable);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_port);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_port_offset);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(kv_event_zmq_publish_interval_ms);
   XLLM_CONFIG_ASSIGN_FROM_JSON(heart_beat_interval);
   XLLM_CONFIG_ASSIGN_FROM_JSON(etcd_ttl);
 }
@@ -99,6 +124,14 @@ void DistributedConfig::append_config_json(
       config_json, default_config, enable_service_routing);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_peer_service);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_event_zmq_enable);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_event_zmq_port);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_event_zmq_port_offset);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, kv_event_zmq_publish_interval_ms);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, heart_beat_interval);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(

@@ -33,6 +33,7 @@ limitations under the License.
 #include "forward_params.h"
 #include "framework/block/block_manager_pool.h"
 #include "framework/request/request_output.h"
+#include "kv_event_publisher.h"
 #include "scheduler/scheduler.h"
 #include "xservice.pb.h"
 namespace xllm {
@@ -71,6 +72,7 @@ class XServiceClient {
  private:
   bool register_instance_with_retry(const std::string& key,
                                     const std::string& value);
+  void maybe_start_kv_event_publisher(InstanceInfo* registered_info);
   bool reconcile_registration();
   void reconcile_registration_loop();
 
@@ -123,6 +125,7 @@ class XServiceClient {
       xservice_stubs_;
   std::unique_ptr<std::thread> heartbeat_thread_;
   std::unique_ptr<std::thread> reconcile_thread_;
+  std::unique_ptr<KvEventPublisher> kv_event_publisher_;
 
   std::shared_mutex mutex_;
   std::mutex registration_mutex_;

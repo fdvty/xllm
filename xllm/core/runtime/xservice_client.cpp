@@ -24,6 +24,7 @@ limitations under the License.
 #include <algorithm>
 #include <iterator>
 #include <unordered_map>
+#include <utility>
 
 #include "core/common/metrics.h"
 #include "core/framework/config/distributed_config.h"
@@ -70,6 +71,15 @@ bool check_instance_name(const std::string& name) {
   }
 
   return true;
+}
+
+std::string extract_instance_host(const std::string& instance_name) {
+  const std::string normalized_name = parse_instance_name(instance_name);
+  const auto pos = normalized_name.rfind(':');
+  if (pos == std::string::npos) {
+    return xllm::net::get_local_ip_addr();
+  }
+  return normalized_name.substr(0, pos);
 }
 
 }  // namespace
@@ -198,6 +208,9 @@ XServiceClient::~XServiceClient() {
   if (reconcile_thread_ && reconcile_thread_->joinable()) {
     reconcile_thread_->join();
   }
+  if (kv_event_publisher_) {
+    kv_event_publisher_->stop();
+  }
 }
 
 std::string XServiceClient::get_instance_name() { return instance_name_; }
@@ -217,6 +230,62 @@ bool XServiceClient::register_instance_with_retry(const std::string& key,
     retry_cnt++;
   }
   return true;
+}
+
+void XServiceClient::maybe_start_kv_event_publisher(
+    InstanceInfo* registered_info) {
+  if (registered_info == nullptr) {
+    return;
+  }
+
+  const auto& distributed_config = ::xllm::DistributedConfig::get_instance();
+  if (!distributed_config.enable_peer_service() ||
+      !distributed_config.kv_event_zmq_enable()) {
+    return;
+  }
+
+  if (block_manager_pool_ == nullptr) {
+    LOG(WARNING) << "KV event ZMQ is enabled but block manager pool is null.";
+    return;
+  }
+  if (!block_manager_pool_->options().enable_prefix_cache()) {
+    LOG(INFO) << "KV event ZMQ is enabled but prefix cache is disabled.";
+    return;
+  }
+
+  if (kv_event_publisher_) {
+    registered_info->zmq_endpoint = kv_event_publisher_->endpoint();
+    return;
+  }
+
+  const int32_t explicit_port = distributed_config.kv_event_zmq_port();
+  const int32_t port = explicit_port > 0
+                           ? explicit_port
+                           : (::xllm::ServiceConfig::get_instance().port() +
+                              distributed_config.kv_event_zmq_port_offset());
+  if (port <= 0 || port > 65535) {
+    LOG(FATAL) << "Invalid KV event ZMQ port: " << port;
+    return;
+  }
+
+  const std::string host = extract_instance_host(registered_info->name);
+  const std::string endpoint = "tcp://" + host + ":" + std::to_string(port);
+
+  KvEventPublisher::Options options;
+  options.instance_name(registered_info->name)
+      .incarnation_id(registered_info->incarnation_id)
+      .public_endpoint(endpoint)
+      .port(port)
+      .publish_interval_ms(
+          distributed_config.kv_event_zmq_publish_interval_ms())
+      .block_manager_pool(block_manager_pool_);
+  kv_event_publisher_ = std::make_unique<KvEventPublisher>(std::move(options));
+  if (!kv_event_publisher_->start()) {
+    LOG(FATAL) << "Failed to start KV event publisher, endpoint: " << endpoint;
+    return;
+  }
+
+  registered_info->zmq_endpoint = endpoint;
 }
 
 bool XServiceClient::reconcile_registration() {
@@ -281,6 +350,8 @@ void XServiceClient::register_instance(const InstanceInfo& instance_info) {
     LOG(ERROR) << "Unsupported instance type: " << registered_info.type;
     return;
   }
+
+  maybe_start_kv_event_publisher(&registered_info);
 
   const std::string key = key_prefix + registered_info.name;
   const std::string value = registered_info.serialize_to_json().dump();
@@ -351,6 +422,7 @@ InstanceInfo XServiceClient::get_instance_info(
   result.rpc_address = resp.rpc_address();
   result.incarnation_id = resp.incarnation_id();
   result.register_ts_ms = resp.register_ts_ms();
+  result.zmq_endpoint = resp.zmq_endpoint();
   if (resp.type() == xllm_service::proto::InstanceType::PREFILL) {
     result.type = "PREFILL";
   } else if (resp.type() == xllm_service::proto::InstanceType::DECODE) {
@@ -392,7 +464,9 @@ void XServiceClient::heartbeat() {
     xllm_service::proto::HeartbeatRequest req;
     req.set_name(instance_name_);
     req.set_incarnation_id(incarnation_id_);
-    if (block_manager_pool_->options().enable_prefix_cache()) {
+    const bool send_cache_event_in_heartbeat = kv_event_publisher_ == nullptr;
+    if (send_cache_event_in_heartbeat &&
+        block_manager_pool_->options().enable_prefix_cache()) {
       block_manager_pool_->get_merged_kvcache_event(&event);
       auto cache_event = req.mutable_cache_event();
       if (event.stored_cache.size()) {
@@ -652,6 +726,9 @@ nlohmann::json XServiceClient::debug_summary() {
   summary["master_xservice_addr"] = master_xservice_addr_;
   summary["connected_service_count"] = xservice_stubs_.size();
   summary["connected_services"] = std::move(connected_services);
+  summary["kv_event_publisher"] =
+      kv_event_publisher_ ? kv_event_publisher_->debug_summary()
+                          : nlohmann::json::object();
   return summary;
 }
 

@@ -31,6 +31,7 @@ cc_library(
     rec_worker_impl.h
     mm_embed_vlm_worker_impl.h
     worker_client.h
+    kv_event_publisher.h
     xservice_client.h
     speculative_worker_impl.h
     mtp_worker_impl.h
@@ -62,6 +63,7 @@ cc_library(
     rec_worker_impl.cpp
     mm_embed_vlm_worker_impl.cpp
     worker_client.cpp
+    kv_event_publisher.cpp
     xservice_client.cpp
     params_utils.cpp
     speculative_worker_impl.cpp
@@ -102,6 +104,7 @@ cc_library(
     absl::synchronization
     absl::flat_hash_map
     nlohmann_json::nlohmann_json
+    cppzmq
     proto::xllm_proto
     $<$<BOOL:${USE_MLU}>:torch_mlu>
     $<$<BOOL:${USE_DCU}>:hip::host>

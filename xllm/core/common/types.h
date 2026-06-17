@@ -219,6 +219,7 @@ struct InstanceInfo {
   std::string rpc_address = "";
   std::string incarnation_id = "";
   uint64_t register_ts_ms = 0;
+  std::string zmq_endpoint = "";
   // DEFAULT/PREFILL/DECODE/MIX
   std::string type = "";
   // remote kv cache info
@@ -249,6 +250,7 @@ struct InstanceInfo {
     json_val["rpc_address"] = rpc_address;
     json_val["incarnation_id"] = incarnation_id;
     json_val["register_ts_ms"] = register_ts_ms;
+    json_val["zmq_endpoint"] = zmq_endpoint;
     if (InstanceRole(type) == InstanceRole::DEFAULT) {
       json_val["type"] = 0;
     } else if (InstanceRole(type) == InstanceRole::PREFILL) {

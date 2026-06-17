@@ -187,6 +187,14 @@ DECLARE_bool(enable_service_routing);
 
 DECLARE_bool(enable_peer_service);
 
+DECLARE_bool(kv_event_zmq_enable);
+
+DECLARE_int32(kv_event_zmq_port);
+
+DECLARE_int32(kv_event_zmq_port_offset);
+
+DECLARE_int32(kv_event_zmq_publish_interval_ms);
+
 DECLARE_double(heart_beat_interval);
 
 DECLARE_int32(etcd_ttl);
