@@ -18,10 +18,11 @@ limitations under the License.
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 #include <glog/logging.h>
-#include <zmq.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <zmq.hpp>
 
 #include "common/metrics.h"
 #include "framework/block/block_manager_pool.h"
@@ -30,6 +31,39 @@ limitations under the License.
 
 namespace xllm {
 namespace {
+
+// Test-only fault injection: env `XLLM_KV_EVENT_DROP_RATE` in [0.0, 1.0) makes
+// the publisher drop that fraction of DELTA events (snapshots are never
+// dropped, so the subscriber index always converges within one snapshot
+// period). Reads the env once. Default 0.0 => no-op in production. Used by the
+// Phase 3 §3.3-4 loss-convergence test and the §2.4-5 seq-gap test.
+double kv_event_drop_rate() {
+  static const double kDropRate = [] {
+    const char* raw = std::getenv("XLLM_KV_EVENT_DROP_RATE");
+    if (raw == nullptr) {
+      return 0.0;
+    }
+    double rate = std::atof(raw);
+    if (rate < 0.0) {
+      rate = 0.0;
+    }
+    if (rate > 1.0) {
+      rate = 1.0;
+    }
+    return rate;
+  }();
+  return kDropRate;
+}
+
+// Returns true when the current DELTA event should be dropped for testing.
+bool should_drop_delta_event() {
+  const double rate = kv_event_drop_rate();
+  if (rate <= 0.0) {
+    return false;
+  }
+  return static_cast<double>(std::rand()) / static_cast<double>(RAND_MAX) <
+         rate;
+}
 
 void fill_proto_cache_event(const KvCacheEvent& event,
                             xllm_service::proto::KvCacheEvent* proto_event) {
@@ -48,10 +82,10 @@ void fill_proto_cache_event(const KvCacheEvent& event,
   }
 }
 
-bool publish_envelope(zmq::socket_t* publisher,
-                      const std::string& instance_name,
-                      const xllm_service::proto::KvCacheEventEnvelope&
-                          envelope) {
+bool publish_envelope(
+    zmq::socket_t* publisher,
+    const std::string& instance_name,
+    const xllm_service::proto::KvCacheEventEnvelope& envelope) {
   std::string payload;
   if (!envelope.SerializeToString(&payload)) {
     LOG(ERROR) << "Failed to serialize KV cache event envelope, instance: "
@@ -202,10 +236,21 @@ void KvEventPublisher::publish_loop() {
       continue;
     }
 
+    // Consume the seq_no first so a test-injected drop still leaves a hole in
+    // the sequence for the subscriber to detect as a gap.
+    const uint64_t seq_no =
+        next_seq_no_.fetch_add(1, std::memory_order_relaxed);
+    if (should_drop_delta_event()) {
+      LOG_EVERY_N(WARNING, 50)
+          << "XLLM_KV_EVENT_DROP_RATE active: dropped delta event seq_no="
+          << seq_no << " (test-only fault injection)";
+      continue;
+    }
+
     xllm_service::proto::KvCacheEventEnvelope envelope;
     envelope.set_event_type(xllm_service::proto::KV_CACHE_EVENT_DELTA);
     envelope.set_incarnation_id(options_.incarnation_id());
-    envelope.set_seq_no(next_seq_no_.fetch_add(1, std::memory_order_relaxed));
+    envelope.set_seq_no(seq_no);
     envelope.set_publish_ts_ms(
         static_cast<uint64_t>(absl::ToUnixMillis(absl::Now())));
     fill_proto_cache_event(event, envelope.mutable_cache_event());
