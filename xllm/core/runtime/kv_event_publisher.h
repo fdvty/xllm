@@ -33,6 +33,8 @@ class BlockManagerPool;
 
 class KvEventPublisher final {
  public:
+  using BlockManagerPoolPtr = const BlockManagerPool*;
+
   struct Options {
     PROPERTY(std::string, instance_name);
     PROPERTY(std::string, incarnation_id);
@@ -40,7 +42,7 @@ class KvEventPublisher final {
     PROPERTY(int32_t, port) = 0;
     PROPERTY(int32_t, publish_interval_ms) = 50;
     PROPERTY(int32_t, snapshot_interval_ms) = 60000;
-    PROPERTY(const BlockManagerPool*, block_manager_pool) = nullptr;
+    PROPERTY(BlockManagerPoolPtr, block_manager_pool) = nullptr;
   };
 
   explicit KvEventPublisher(Options options);
