@@ -90,6 +90,11 @@ class LLMMaster : public Master {
 
   bool link_p2p(const std::vector<std::string>& remote_addrs) override;
 
+  bool get_xtensor_info(
+      std::vector<size_t>& worker_free_phy_pages,
+      std::unordered_map<std::string, std::vector<WeightSegment>>&
+          model_weight_segments) override;
+
   bool unlink_p2p(const std::vector<std::string>& remote_addrs) override;
 
   // Async RL training support: pause/resume.

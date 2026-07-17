@@ -47,6 +47,18 @@ class Master {
     return false;
   }
 
+  // Fetch the XTensor layout of this instance: per-worker free physical pages
+  // and, for each model, the ordered weight segments in GlobalXTensor. This is
+  // the same information published in heartbeats (XTensorHeartbeatInfo); it is
+  // exposed here so a D2D source instance can be queried directly without etcd.
+  // Returns false if the engine does not support XTensor mode.
+  virtual bool get_xtensor_info(
+      std::vector<size_t>& worker_free_phy_pages,
+      std::unordered_map<std::string, std::vector<WeightSegment>>&
+          model_weight_segments) {
+    return false;
+  }
+
   // Start/stop online timeline profiling on all workers. Forwards to the
   // engine, which broadcasts to every worker. CUDA only for now.
   virtual bool start_profile() {

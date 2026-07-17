@@ -1236,6 +1236,87 @@ void APIService::WakeupHttp(::google::protobuf::RpcController* controller,
   // Success: return HTTP 200 with empty body
 }
 
+void APIService::GetXTensorInfoHttp(
+    ::google::protobuf::RpcController* controller,
+    const proto::HttpRequest* request,
+    proto::HttpResponse* response,
+    ::google::protobuf::Closure* done) {
+  brpc::ClosureGuard done_guard(done);
+  if (!request || !response || !controller) {
+    LOG(ERROR) << "brpc request | response | controller is null";
+    return;
+  }
+
+  auto ctrl = reinterpret_cast<brpc::Controller*>(controller);
+
+  // Resolve the target master. The request body may optionally carry a
+  // {"model_id": "..."} to select a specific model; otherwise fall back to the
+  // primary master of this instance.
+  std::string model_id;
+  if (ctrl->request_attachment().size() > 0) {
+    auto arena = response->GetArena();
+    auto req_pb =
+        google::protobuf::Arena::CreateMessage<proto::MasterInfos>(arena);
+    std::string error;
+    json2pb::Json2PbOptions options;
+    butil::IOBuf& buf = ctrl->request_attachment();
+    butil::IOBufAsZeroCopyInputStream iobuf_stream(buf);
+    if (json2pb::JsonToProtoMessage(&iobuf_stream, req_pb, options, &error)) {
+      model_id = req_pb->model_id();
+    } else {
+      LOG(WARNING) << "GetXTensorInfoHttp: failed to parse request body: "
+                   << error << ", falling back to primary master";
+    }
+  }
+
+  Master* master = nullptr;
+  if (!model_id.empty()) {
+    master = get_model_master(model_id);
+    if (master == nullptr) {
+      LOG(ERROR) << "Master for model " << model_id << " not found";
+      ctrl->SetFailed("Master for model " + model_id + " not found");
+      return;
+    }
+  } else {
+    master = master_;
+  }
+  if (master == nullptr) {
+    LOG(ERROR) << "No master available to query xtensor info";
+    ctrl->SetFailed("No master available to query xtensor info");
+    return;
+  }
+
+  std::vector<size_t> worker_free_phy_pages;
+  std::unordered_map<std::string, std::vector<WeightSegment>>
+      model_weight_segments;
+  if (!master->get_xtensor_info(worker_free_phy_pages, model_weight_segments)) {
+    LOG(ERROR) << "get_xtensor_info failed: engine does not support XTensor "
+                  "mode (start with --enable_xtensor=true)";
+    ctrl->SetFailed(
+        "get_xtensor_info failed: engine does not support XTensor mode "
+        "(start with --enable_xtensor=true)");
+    return;
+  }
+
+  // Serialize to JSON. Layout mirrors XTensorHeartbeatInfo /
+  // InstanceInfo::serialize_to_json so callers can feed weight segments back
+  // into /wakeup (MasterInfos.src_weight_segments) for D2D transfer.
+  nlohmann::json json_val;
+  json_val["worker_free_phy_pages"] = worker_free_phy_pages;
+  nlohmann::json segments_json = nlohmann::json::object();
+  for (const auto& [mid, segments] : model_weight_segments) {
+    nlohmann::json seg_array = nlohmann::json::array();
+    for (const auto& seg : segments) {
+      seg_array.push_back({{"offset", seg.offset}, {"size", seg.size}});
+    }
+    segments_json[mid] = seg_array;
+  }
+  json_val["model_weight_segments"] = segments_json;
+
+  ctrl->http_response().set_content_type("application/json");
+  ctrl->response_attachment().append(json_val.dump());
+}
+
 void APIService::StartProfileHttp(::google::protobuf::RpcController* controller,
                                   const proto::HttpRequest* request,
                                   proto::HttpResponse* response,

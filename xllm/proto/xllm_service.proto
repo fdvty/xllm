@@ -113,6 +113,11 @@ service XllmAPIService {
   rpc Wakeup (MasterInfos) returns (Status);
   rpc WakeupHttp (HttpRequest) returns (HttpResponse);
 
+  // Query the XTensor layout (worker free physical pages + model weight
+  // segments) of a running instance. Used to drive D2D weight transfer:
+  // the destination needs the source's segment layout to receive weights.
+  rpc GetXTensorInfoHttp (HttpRequest) returns (HttpResponse);
+
   rpc StartProfileHttp (HttpRequest) returns (HttpResponse);
   rpc StopProfileHttp (HttpRequest) returns (HttpResponse);
 

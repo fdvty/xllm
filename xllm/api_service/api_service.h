@@ -178,6 +178,11 @@ class APIService : public proto::XllmAPIService {
                   proto::HttpResponse* response,
                   ::google::protobuf::Closure* done) override;
 
+  void GetXTensorInfoHttp(::google::protobuf::RpcController* controller,
+                          const proto::HttpRequest* request,
+                          proto::HttpResponse* response,
+                          ::google::protobuf::Closure* done) override;
+
   void StartProfileHttp(::google::protobuf::RpcController* controller,
                         const proto::HttpRequest* request,
                         proto::HttpResponse* response,

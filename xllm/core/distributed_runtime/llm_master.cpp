@@ -557,6 +557,17 @@ bool LLMMaster::link_p2p(const std::vector<std::string>& remote_addrs) {
   return engine_->link_p2p(remote_addrs);
 }
 
+bool LLMMaster::get_xtensor_info(
+    std::vector<size_t>& worker_free_phy_pages,
+    std::unordered_map<std::string, std::vector<WeightSegment>>&
+        model_weight_segments) {
+  if (engine_ == nullptr) {
+    return false;
+  }
+  engine_->get_xtensor_info(worker_free_phy_pages, model_weight_segments);
+  return true;
+}
+
 bool LLMMaster::unlink_p2p(const std::vector<std::string>& remote_addrs) {
   return engine_->unlink_p2p(remote_addrs);
 }
