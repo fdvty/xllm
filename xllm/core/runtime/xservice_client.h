@@ -55,6 +55,7 @@ class XServiceClient {
   bool initialize_done() { return initialize_done_; }
 
   std::string get_instance_name();
+  std::string get_incarnation_id() const;
   void register_instance(const InstanceInfo& instance_info);
   void heartbeat();
   InstanceInfo get_instance_info(const std::string& instance_name);
@@ -94,9 +95,8 @@ class XServiceClient {
 
   // call rpc with one available peer xllm_service stub atomically.
   bool with_any_xservice_stub(
-      const std::function<bool(
-          xllm_service::proto::XllmRpcService_Stub*,
-          const std::string& xservice_addr)>& fn,
+      const std::function<bool(xllm_service::proto::XllmRpcService_Stub*,
+                               const std::string& xservice_addr)>& fn,
       std::string* xservice_addr);
 
   bool get_any_xservice_addr(std::string* xservice_addr);

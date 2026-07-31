@@ -136,6 +136,9 @@ struct RequestParams {
   // decode address.
   std::string decode_address;
 
+  // decode process incarnation selected by the routing layer.
+  std::string decode_incarnation;
+
   // JSON-based tools (replacing proto_tools)
   std::vector<xllm::JsonTool> tools;
 

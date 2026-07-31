@@ -21,6 +21,7 @@ limitations under the License.
 #include "common/types.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "distributed_runtime/llm_engine.h"
+#include "framework/kv_cache_transfer/pd_topology_guard.h"
 #include "framework/request/request_output.h"
 #include "scheduler/disagg_pd_scheduler.h"
 #include "util/utils.h"
@@ -145,6 +146,19 @@ std::shared_ptr<Request> DisaggPDServiceImpl::generate_request(
 void DisaggPDServiceImpl::decode_recv_new_requests(
     const proto::DisaggRequests* request,
     proto::DisaggResponses* response) {
+  const std::string& expected_incarnation = request->decode_incarnation();
+  const std::string actual_incarnation = xservice_client_->get_incarnation_id();
+  if (!pd_incarnation_matches(expected_incarnation, actual_incarnation)) {
+    LOG(WARNING) << "Reject stale decode routing decision: expected "
+                 << expected_incarnation << ", actual " << actual_incarnation;
+    for (const auto& req : request->reqs()) {
+      auto* resp = response->add_resps();
+      resp->set_req_id(req.req_id());
+      resp->set_status_code(kPdStaleIncarnationStatusCode);
+    }
+    return;
+  }
+
   for (auto& req : request->reqs()) {
     auto resp = response->add_resps();
     resp->set_req_id(req.req_id());

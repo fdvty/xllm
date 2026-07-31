@@ -238,6 +238,8 @@ void CompletionServiceImpl::process_async_rpc_impl(
     }
 
     request_params.decode_address = rpc_request.routing().decode_name();
+    request_params.decode_incarnation =
+        rpc_request.routing().decode_incarnation();
   }
 
   // schedule the request
@@ -289,6 +291,8 @@ void CompletionServiceImpl::process_async_impl(
     }
 
     request_params.decode_address = rpc_request.routing().decode_name();
+    request_params.decode_incarnation =
+        rpc_request.routing().decode_incarnation();
   }
 
   auto saved_streaming = request_params.streaming;

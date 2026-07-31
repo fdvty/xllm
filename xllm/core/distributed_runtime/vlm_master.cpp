@@ -419,6 +419,8 @@ std::shared_ptr<Request> VLMMaster::build_request(
                          options_.enable_schedule_overlap(),
                          callback,
                          nullptr);
+  req_state.decode_address = sp.decode_address;
+  req_state.decode_incarnation = sp.decode_incarnation;
   auto request = std::make_shared<Request>(sp.request_id,
                                            sp.x_request_id,
                                            sp.x_request_time,

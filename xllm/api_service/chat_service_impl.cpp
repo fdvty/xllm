@@ -571,6 +571,8 @@ void ChatServiceImpl::process_rec_chat_request(std::shared_ptr<ChatCall> call) {
       prompt_tokens->emplace_back(rpc_request.token_ids(i));
     }
     request_params.decode_address = rpc_request.routing().decode_name();
+    request_params.decode_incarnation =
+        rpc_request.routing().decode_incarnation();
   }
 
   auto saved_streaming = request_params.streaming;
@@ -704,6 +706,8 @@ void ChatServiceImpl::process_async_rpc_impl(
     }
 
     request_params.decode_address = rpc_request.routing().decode_name();
+    request_params.decode_incarnation =
+        rpc_request.routing().decode_incarnation();
   }
   // Preserve parser-relevant special tokens in decoded output
   // so tool call detectors can match their control markers.
@@ -798,6 +802,8 @@ void ChatServiceImpl::process_async_impl(std::shared_ptr<ChatCall> call) {
     }
 
     request_params.decode_address = rpc_request.routing().decode_name();
+    request_params.decode_incarnation =
+        rpc_request.routing().decode_incarnation();
   }
 
   if (!tool_call_parser_format_.empty() && !request_params.tools.empty()) {

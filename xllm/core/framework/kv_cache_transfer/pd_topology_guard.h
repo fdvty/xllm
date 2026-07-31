@@ -40,6 +40,10 @@ struct PdTopoResult {
   std::string reason = "";
 };
 
+// HTTP-style status used inside the P/D RPC protocol for a decode process
+// whose endpoint was replaced after the routing decision was made.
+inline constexpr int32_t kPdStaleIncarnationStatusCode = 409;
+
 bool try_get_pd_topo(const InstanceInfo& info,
                      PdTopo* topo,
                      std::string* reason);
@@ -50,5 +54,10 @@ PdTopoResult check_pd_topo(const InstanceInfo& local,
                            const InstanceInfo& remote,
                            const std::string& kv_mode,
                            bool enable_mla);
+
+// An empty expected value keeps rolling upgrades compatible with older
+// routers. New routing decisions always provide a non-empty incarnation.
+bool pd_incarnation_matches(const std::string& expected,
+                            const std::string& actual);
 
 }  // namespace xllm

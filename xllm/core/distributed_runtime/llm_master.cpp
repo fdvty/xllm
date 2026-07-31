@@ -484,6 +484,7 @@ std::shared_ptr<Request> LLMMaster::generate_request(
                          batch_callback,
                          sp.decode_address,
                          call);
+  req_state.decode_incarnation = sp.decode_incarnation;
   req_state.sample_slots = sp.sample_slots;
 
   auto request = std::make_shared<Request>(sp.request_id,

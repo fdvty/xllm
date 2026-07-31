@@ -686,6 +686,8 @@ void AnthropicServiceImpl::process_async_impl(
       prompt_tokens->emplace_back(rpc_request.token_ids(i));
     }
     request_params.decode_address = rpc_request.routing().decode_name();
+    request_params.decode_incarnation =
+        rpc_request.routing().decode_incarnation();
   }
 
   // Handle request

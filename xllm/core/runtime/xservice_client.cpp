@@ -216,6 +216,10 @@ XServiceClient::~XServiceClient() {
 
 std::string XServiceClient::get_instance_name() { return instance_name_; }
 
+std::string XServiceClient::get_incarnation_id() const {
+  return incarnation_id_;
+}
+
 bool XServiceClient::register_instance_with_retry(const std::string& key,
                                                   const std::string& value) {
   int retry_cnt = 0;
@@ -661,8 +665,9 @@ std::vector<std::string> XServiceClient::get_static_decode_list() {
     }
 
     if (cntl.Failed()) {
-      LOG(ERROR) << "Fail to get static decode list from master xservice server "
-                 << service_addr << ", error text: " << cntl.ErrorText();
+      LOG(ERROR)
+          << "Fail to get static decode list from master xservice server "
+          << service_addr << ", error text: " << cntl.ErrorText();
       return {};
     }
   }
@@ -739,9 +744,9 @@ nlohmann::json XServiceClient::debug_summary() {
   summary["master_xservice_addr"] = master_xservice_addr_;
   summary["connected_service_count"] = xservice_stubs_.size();
   summary["connected_services"] = std::move(connected_services);
-  summary["kv_event_publisher"] =
-      kv_event_publisher_ ? kv_event_publisher_->debug_summary()
-                          : nlohmann::json::object();
+  summary["kv_event_publisher"] = kv_event_publisher_
+                                      ? kv_event_publisher_->debug_summary()
+                                      : nlohmann::json::object();
   return summary;
 }
 
@@ -1023,9 +1028,8 @@ bool XServiceClient::with_master_stub(
 }
 
 bool XServiceClient::with_any_xservice_stub(
-    const std::function<bool(
-        xllm_service::proto::XllmRpcService_Stub*,
-        const std::string& xservice_addr)>& fn,
+    const std::function<bool(xllm_service::proto::XllmRpcService_Stub*,
+                             const std::string& xservice_addr)>& fn,
     std::string* xservice_addr) {
   if (xservice_addr == nullptr) {
     return false;

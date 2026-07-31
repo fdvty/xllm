@@ -148,6 +148,9 @@ struct RequestState final {
   // decode address.
   std::string decode_address;
 
+  // decode process incarnation selected before prefill starts.
+  std::string decode_incarnation;
+
   torch::Tensor input_embedding;
 
   // multimodal

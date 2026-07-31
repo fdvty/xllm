@@ -112,4 +112,9 @@ PdTopoResult check_pd_topo(const InstanceInfo& local,
   return check_hetero_pd_req(kv_mode, enable_mla);
 }
 
+bool pd_incarnation_matches(const std::string& expected,
+                            const std::string& actual) {
+  return expected.empty() || (!actual.empty() && expected == actual);
+}
+
 }  // namespace xllm

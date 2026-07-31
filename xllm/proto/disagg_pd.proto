@@ -21,6 +21,9 @@ message DisaggRequests {
   string prefill_name = 1;
   repeated DisaggRequest reqs = 2;
   ClusterInfos cluster_infos = 3;
+  // Decode incarnation selected before the request entered the prefill stage.
+  // The decode instance rejects a non-empty value that no longer matches.
+  string decode_incarnation = 4;
 }
 
 message StopSequence {

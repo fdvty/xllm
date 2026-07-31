@@ -90,6 +90,20 @@ TEST(PdTopologyGuardTest, HeteroTopoAllowOnPushMla) {
   EXPECT_TRUE(result.reason.empty());
 }
 
+TEST(PdTopologyGuardTest, IncarnationGuardAllowsLegacyUnspecifiedValue) {
+  EXPECT_TRUE(pd_incarnation_matches("", "decode-v2"));
+  EXPECT_TRUE(pd_incarnation_matches("", ""));
+}
+
+TEST(PdTopologyGuardTest, IncarnationGuardAcceptsExactMatch) {
+  EXPECT_TRUE(pd_incarnation_matches("decode-v2", "decode-v2"));
+}
+
+TEST(PdTopologyGuardTest, IncarnationGuardRejectsReplacementAndMissingActual) {
+  EXPECT_FALSE(pd_incarnation_matches("decode-v1", "decode-v2"));
+  EXPECT_FALSE(pd_incarnation_matches("decode-v1", ""));
+}
+
 TEST(PdTopologyGuardTest, CheckPdTopoRejectInvalidLocalTopo) {
   const InstanceInfo local_info = make_info(0, {0, 1, 2, 3});
   const InstanceInfo remote_info = make_info(1, {0, 1, 2, 3});

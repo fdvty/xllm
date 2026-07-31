@@ -390,6 +390,14 @@ void DisaggPDScheduler::dispatch_requests() {
           {StatusCode::UNKNOWN, "failed to fetch remote decode instance info"});
       continue;
     }
+    if (!pd_incarnation_matches(request->state().decode_incarnation,
+                                remote_info.incarnation_id)) {
+      response_processor_->process_failed_request(
+          request,
+          {StatusCode::UNAVAILABLE,
+           "stale decode routing decision for " + selected_instance});
+      continue;
+    }
     remote_instances_info_[selected_instance] = remote_info;
 
     const bool enable_mla = engine_->model_args().enable_mla();
@@ -446,6 +454,7 @@ void DisaggPDScheduler::dispatch_requests() {
     xllm::proto::DisaggResponses resps;
     // prefill name (ID)
     reqs.set_prefill_name(xservice_client_->get_instance_name());
+    reqs.set_decode_incarnation(request->state().decode_incarnation);
     reqs.mutable_reqs()->Reserve(requests.size());
     // currently we only support one request once.
     for (size_t i = 0; i < requests.size(); ++i) {
@@ -535,13 +544,20 @@ void DisaggPDScheduler::dispatch_requests() {
     // and push back to prefill_request_queue_
     CHECK_EQ(requests.size(), resps.resps().size())
         << "selected_instance : " << selected_instance;
-    // insert instance name to linked_instance_
-    {
-      std::lock_guard<std::mutex> lock(linked_instances_mutex_);
-      linked_instance_.emplace(selected_instance);
-    }
     for (size_t i = 0; i < requests.size(); ++i) {
       if (resps.resps()[i].status_code() != 200) {
+        if (resps.resps()[i].status_code() == kPdStaleIncarnationStatusCode) {
+          response_processor_->process_failed_request(
+              requests[i],
+              {StatusCode::UNAVAILABLE,
+               "decode instance rejected a stale routing decision"});
+          {
+            std::lock_guard<std::mutex> lock(req_to_channel_map_mutex_);
+            req_to_channel_map_.erase(requests[i]->request_id());
+          }
+          remote_instances_info_.erase(selected_instance);
+          continue;
+        }
         // push back to prefill_request_queue_
         if (requests[i]->offline()) {
           prefill_request_queue_offline_.enqueue(requests[i]);
@@ -550,6 +566,10 @@ void DisaggPDScheduler::dispatch_requests() {
         }
 
       } else {
+        {
+          std::lock_guard<std::mutex> lock(linked_instances_mutex_);
+          linked_instance_.emplace(selected_instance);
+        }
         for (auto& sequence : requests[i]->sequences()) {
           TransferKVInfo info;
           info.request_id = requests[i]->request_id();

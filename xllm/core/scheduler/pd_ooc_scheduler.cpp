@@ -31,6 +31,7 @@ limitations under the License.
 #include "disagg_pd.pb.h"
 #include "distributed_runtime/engine.h"
 #include "framework/batch/batch_factory.h"
+#include "framework/kv_cache_transfer/pd_topology_guard.h"
 #include "framework/request/request.h"
 #include "framework/request/request_state.h"
 #include "framework/request/sequence.h"
@@ -826,6 +827,20 @@ void PDOOCScheduler::dispatch_requests() {
       }
     }
 
+    if (!request->state().decode_incarnation.empty()) {
+      const InstanceInfo remote_info =
+          xservice_client_->get_instance_info(selected_instance);
+      if (!pd_incarnation_matches(request->state().decode_incarnation,
+                                  remote_info.incarnation_id)) {
+        response_processor_->process_failed_request(
+            request,
+            {StatusCode::UNAVAILABLE,
+             "stale decode routing decision for " + selected_instance});
+        continue;
+      }
+      remote_instances_info_[selected_instance] = remote_info;
+    }
+
     {
       std::lock_guard<std::mutex> lock(req_to_channel_map_mutex_);
       for (auto& req : requests) {
@@ -851,6 +866,18 @@ void PDOOCScheduler::dispatch_requests() {
     for (size_t i = 0; i < requests.size(); ++i) {
       CHECK(!requests[i]->offline());
       if (resps.resps()[i].status_code() != 200) {
+        if (resps.resps()[i].status_code() == kPdStaleIncarnationStatusCode) {
+          response_processor_->process_failed_request(
+              requests[i],
+              {StatusCode::UNAVAILABLE,
+               "decode instance rejected a stale routing decision"});
+          {
+            std::lock_guard<std::mutex> lock(req_to_channel_map_mutex_);
+            req_to_channel_map_.erase(requests[i]->request_id());
+          }
+          remote_instances_info_.erase(selected_instance);
+          continue;
+        }
         // push back to prefill_request_queue_
         if (requests[i]->offline()) {
           prefill_request_queue_offline_.enqueue(requests[i]);
@@ -1272,8 +1299,19 @@ void PDOOCScheduler::dispatch_offline_requests() {
     stub->AddNewRequests(&cntl, &reqs, &resps, nullptr);
 
     // Check response and handle accordingly
-    if (cntl.Failed() || resps.resps().empty() ||
-        resps.resps()[0].status_code() != 200) {
+    if (!cntl.Failed() && !resps.resps().empty() &&
+        resps.resps()[0].status_code() == kPdStaleIncarnationStatusCode) {
+      response_processor_->process_failed_request(
+          request,
+          {StatusCode::UNAVAILABLE,
+           "decode instance rejected a stale routing decision"});
+      {
+        std::lock_guard<std::mutex> lock(req_to_channel_map_mutex_);
+        req_to_channel_map_.erase(request->request_id());
+      }
+      remote_instances_info_.erase(target_instance);
+    } else if (cntl.Failed() || resps.resps().empty() ||
+               resps.resps()[0].status_code() != 200) {
       LOG(ERROR) << "Failed to dispatch offline request "
                  << request->request_id() << " to " << target_instance
                  << ". Status: "
@@ -1464,6 +1502,9 @@ void PDOOCScheduler::build_disagg_requests(
     proto::DisaggRequests& reqs) {
   // prefill name (ID)
   reqs.set_prefill_name(xservice_client_->get_instance_name());
+  if (!requests.empty()) {
+    reqs.set_decode_incarnation(requests.front()->state().decode_incarnation);
+  }
   reqs.mutable_reqs()->Reserve(requests.size());
 
   // Build proto::DisaggRequest for each request

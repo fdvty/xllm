@@ -58,6 +58,7 @@ cc_library(
     :api_service
     :runtime
     :util
+    :pd_topology_guard
     glog::glog
     proto::xllm_proto
     absl::flat_hash_set
