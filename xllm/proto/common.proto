@@ -63,6 +63,12 @@ message Routing {
   string prefill_name = 1;
 
   string decode_name = 2;
+
+  // Expected runtime incarnations selected by the routing layer. Empty values
+  // preserve compatibility with clients that predate incarnation fencing.
+  string prefill_incarnation = 3;
+
+  string decode_incarnation = 4;
 }
 
 message Empty {}
