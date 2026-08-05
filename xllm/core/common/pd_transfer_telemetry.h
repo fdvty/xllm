@@ -29,6 +29,7 @@ struct PDTransferTelemetryEvent {
   uint64_t attempt_id = kLegacyPDAttemptId;
   std::string event;
   int64_t monotonic_ns = 0;
+  std::string transfer_backend;
   std::string transfer_mode;
   int32_t source_rank = -1;
   uint64_t destination_cluster_id = 0;
@@ -42,6 +43,8 @@ struct PDTransferTelemetryEvent {
 };
 
 int64_t pd_transfer_monotonic_time_ns();
+
+bool pd_transfer_telemetry_enabled();
 
 std::string serialize_pd_transfer_telemetry(
     const PDTransferTelemetryEvent& event);

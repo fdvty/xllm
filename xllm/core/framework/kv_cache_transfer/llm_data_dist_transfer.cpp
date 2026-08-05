@@ -20,6 +20,7 @@ limitations under the License.
 #include <algorithm>
 #include <chrono>
 #include <limits>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -54,6 +55,7 @@ void log_llm_data_dist_event(
   event.attempt_id = request.attempt_id;
   event.event = event_name;
   event.monotonic_ns = monotonic_ns;
+  event.transfer_backend = "LlmDataDist";
   event.transfer_mode = "PUSH";
   event.source_rank = request.source_rank;
   if (destination != nullptr) {
@@ -402,25 +404,28 @@ bool LlmDataDistTransfer::push_layer_registered_caches(
   bool result = true;
   const int64_t num_layers =
       static_cast<int64_t>(layer_registered_caches.size());
+  const bool telemetry_enabled = pd_transfer_telemetry_enabled();
   for (int64_t layer_index = 0; layer_index < num_layers; ++layer_index) {
-    const bool is_last_layer = layer_index == num_layers - 1;
+    const bool trace_last_layer =
+        telemetry_enabled && layer_index == num_layers - 1;
     std::vector<PendingLlmDataDistTelemetry> pending_transfers;
-    if (is_last_layer) {
+    if (trace_last_layer) {
       pending_transfers.reserve(keys.size());
     }
     // Wait for the KV cache computation of this layer to complete.
     layer_synchronizer->synchronize_layer(layer_index);
     const int64_t ready_ns =
-        is_last_layer ? pd_transfer_monotonic_time_ns() : 0;
+        trace_last_layer ? pd_transfer_monotonic_time_ns() : 0;
     for (const std::string& key : keys) {
       const KVCacheInfo& kv_info = merged_kv_infos.at(key);
       if (kv_info.src_blocks.empty() && kv_info.src_linear_state_ids.empty()) {
         continue;
       }
 
-      PendingLlmDataDistTelemetry pending;
-      if (is_last_layer) {
-        pending.destination = &kv_info;
+      std::optional<PendingLlmDataDistTelemetry> pending;
+      if (trace_last_layer) {
+        pending.emplace();
+        pending->destination = &kv_info;
       }
       bool destination_result = true;
 
@@ -448,15 +453,15 @@ bool LlmDataDistTransfer::push_layer_registered_caches(
         ext_param.dst_layer_range = {0, 0};
         ext_param.tensor_num_per_layer = 1;
 
-        if (is_last_layer) {
-          if (pending.submit_ns == 0) {
-            pending.submit_ns = pd_transfer_monotonic_time_ns();
+        if (trace_last_layer) {
+          if (pending->submit_ns == 0) {
+            pending->submit_ns = pd_transfer_monotonic_time_ns();
           }
           if (!linear_state_cache) {
-            CHECK_LE(pending.bytes_per_block,
+            CHECK_LE(pending->bytes_per_block,
                      std::numeric_limits<uint64_t>::max() -
                          registered_cache.bytes_per_block);
-            pending.bytes_per_block += registered_cache.bytes_per_block;
+            pending->bytes_per_block += registered_cache.bytes_per_block;
           }
         }
         auto ret = llm_data_dist_->PushKvBlocks(
@@ -469,13 +474,13 @@ bool LlmDataDistTransfer::push_layer_registered_caches(
           destination_result = false;
         }
       }
-      if (is_last_layer && pending.submit_ns > 0) {
-        pending.complete_ns = pd_transfer_monotonic_time_ns();
-        pending.result = destination_result ? "completed" : "failed";
-        pending_transfers.emplace_back(std::move(pending));
+      if (trace_last_layer && pending->submit_ns > 0) {
+        pending->complete_ns = pd_transfer_monotonic_time_ns();
+        pending->result = destination_result ? "completed" : "failed";
+        pending_transfers.emplace_back(std::move(*pending));
       }
     }
-    if (is_last_layer) {
+    if (trace_last_layer) {
       log_llm_data_dist_last_layer_events(merged_kv_infos,
                                           pending_transfers,
                                           ready_ns,

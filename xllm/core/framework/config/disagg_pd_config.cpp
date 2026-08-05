@@ -28,6 +28,10 @@ DEFINE_bool(enable_disagg_pd,
             false,
             "Whether to enable disaggregated prefill and decode execution.");
 
+DEFINE_bool(enable_pd_transfer_telemetry,
+            true,
+            "Emit request-level disaggregated KV transfer telemetry.");
+
 DEFINE_bool(
     enable_pd_ooc,
     false,
@@ -66,6 +70,7 @@ bool supports_prefix_cache(const std::string& instance_role) {
 
 void DisaggPDConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_disagg_pd);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_pd_transfer_telemetry);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_pd_ooc);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(disagg_pd_port);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(instance_role);
@@ -77,6 +82,7 @@ void DisaggPDConfig::from_flags() {
 
 void DisaggPDConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_disagg_pd);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(enable_pd_transfer_telemetry);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_pd_ooc);
   XLLM_CONFIG_ASSIGN_FROM_JSON(disagg_pd_port);
   XLLM_CONFIG_ASSIGN_FROM_JSON(instance_role);
@@ -90,6 +96,8 @@ void DisaggPDConfig::append_config_json(
   const DisaggPDConfig default_config;
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_disagg_pd);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, enable_pd_transfer_telemetry);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_pd_ooc);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(

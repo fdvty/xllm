@@ -19,6 +19,8 @@ limitations under the License.
 
 #include <nlohmann/json.hpp>
 
+#include "core/framework/config/disagg_pd_config.h"
+
 namespace xllm {
 
 TEST(PDTransferTelemetryTest, SerializesStableSchemaAndEscapesRequestId) {
@@ -27,6 +29,7 @@ TEST(PDTransferTelemetryTest, SerializesStableSchemaAndEscapesRequestId) {
   event.attempt_id = 7;
   event.event = "transfer_complete";
   event.monotonic_ns = 123456789;
+  event.transfer_backend = "LlmDataDist";
   event.transfer_mode = "PUSH";
   event.source_rank = 3;
   event.destination_cluster_id = 42;
@@ -44,6 +47,7 @@ TEST(PDTransferTelemetryTest, SerializesStableSchemaAndEscapesRequestId) {
   EXPECT_EQ(data["attempt_id"], 7);
   EXPECT_EQ(data["event"], "transfer_complete");
   EXPECT_EQ(data["monotonic_ns"], 123456789);
+  EXPECT_EQ(data["transfer_backend"], "LlmDataDist");
   EXPECT_EQ(data["transfer_mode"], "PUSH");
   EXPECT_EQ(data["source_rank"], 3);
   EXPECT_EQ(data["destination_cluster_id"], 42);
@@ -62,6 +66,15 @@ TEST(PDTransferTelemetryTest, MonotonicTimestampDoesNotGoBackwards) {
 
   EXPECT_GT(first, 0);
   EXPECT_GE(second, first);
+}
+
+TEST(PDTransferTelemetryTest, HonorsDisaggregatedPDConfigSwitch) {
+  DisaggPDConfig& config = DisaggPDConfig::get_instance();
+  const bool original_value = config.enable_pd_transfer_telemetry();
+
+  config.enable_pd_transfer_telemetry(false);
+  EXPECT_FALSE(pd_transfer_telemetry_enabled());
+  config.enable_pd_transfer_telemetry(original_value);
 }
 
 }  // namespace xllm
