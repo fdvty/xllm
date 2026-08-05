@@ -126,6 +126,10 @@ class DisaggPDScheduler : public ChunkedPrefillScheduler {
   // info
   void register_instance_info(const std::string& server_name, Engine* engine);
 
+  void stop_request_admission();
+
+  bool is_stopping() const;
+
   void update_token_latency_metrics(std::vector<Sequence*>& sequences) override;
 
   // remote instance name(ID) -> instance info
@@ -145,6 +149,10 @@ class DisaggPDScheduler : public ChunkedPrefillScheduler {
 
   // for prefill, dispatch request to Decode instance
   std::unique_ptr<std::thread> dispatch_thread_;
+
+  // Serializes request admission with the dispatch-thread shutdown sentinel.
+  mutable std::mutex lifecycle_mutex_;
+  bool stopping_ = false;
 
   moodycamel::BlockingConcurrentQueue<std::shared_ptr<Request>>
       prefill_request_queue_;

@@ -78,23 +78,41 @@ DisaggPDScheduler::DisaggPDScheduler(Engine* engine, const Options& options)
 }
 
 DisaggPDScheduler::~DisaggPDScheduler() {
-  // Clean up common threads (shared by both OOC and non-OOC modes)
-  if (rpc_server_thread_ && rpc_server_thread_->joinable()) {
-    rpc_server_thread_->join();
+  stop_request_admission();
+
+  ServerRegistry& server_registry = ServerRegistry::get_instance();
+  XllmServer* rpc_server = server_registry.try_get_server(server_name_);
+  if (rpc_server != nullptr) {
+    rpc_server->stop();
   }
 
-  // Clean up dispatch thread (created in base class for non-OOC mode,
-  // or in subclass for OOC mode)
   if (dispatch_thread_ && dispatch_thread_->joinable()) {
     dispatch_thread_->join();
   }
 
-  auto rpc_server = ServerRegistry::get_instance().get_server(server_name_);
-  if (rpc_server != nullptr) {
-    rpc_server->stop();
-
-    ServerRegistry::get_instance().unregister_server(server_name_);
+  if (rpc_server_thread_ && rpc_server_thread_->joinable()) {
+    rpc_server_thread_->join();
   }
+
+  if (rpc_server != nullptr) {
+    server_registry.unregister_server(server_name_);
+  }
+}
+
+void DisaggPDScheduler::stop_request_admission() {
+  std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+  if (stopping_) {
+    return;
+  }
+  stopping_ = true;
+  if (dispatch_thread_ && dispatch_thread_->joinable()) {
+    prefill_request_queue_.enqueue(std::shared_ptr<Request>());
+  }
+}
+
+bool DisaggPDScheduler::is_stopping() const {
+  std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+  return stopping_;
 }
 
 void DisaggPDScheduler::initialize_rpc_server(const std::string& server_name) {
@@ -335,7 +353,19 @@ bool DisaggPDScheduler::add_request(std::shared_ptr<Request>& request) {
   CHECK(request != nullptr);
   CHECK(!request->sequences().empty());
 
+  {
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    if (stopping_) {
+      return false;
+    }
+  }
+
   kv_cache_manager_->prefetch_from_storage(request);
+
+  std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+  if (stopping_) {
+    return false;
+  }
 
   if (request->offline()) {
     // offline request, push to offline queue
@@ -387,7 +417,8 @@ void DisaggPDScheduler::dispatch_requests() {
     if (remote_info.name.empty()) {
       response_processor_->process_failed_request(
           request,
-          {StatusCode::UNKNOWN, "failed to fetch remote decode instance info"});
+          {StatusCode::UNAVAILABLE,
+           "Failed to fetch remote decode instance info"});
       continue;
     }
     remote_instances_info_[selected_instance] = remote_info;
@@ -423,7 +454,9 @@ void DisaggPDScheduler::dispatch_requests() {
     proto::DisaggPDService_Stub* stub = create_rpc_channel(selected_instance);
     if (stub == nullptr) {
       response_processor_->process_failed_request(
-          request, {StatusCode::UNKNOWN, "Fail to create rpc channel"});
+          request,
+          {StatusCode::UNAVAILABLE,
+           "Failed to create RPC channel to decode instance"});
       continue;
     }
 
@@ -520,7 +553,7 @@ void DisaggPDScheduler::dispatch_requests() {
       for (auto& request : requests) {
         response_processor_->process_failed_request(
             request,
-            {StatusCode::UNKNOWN,
+            {StatusCode::UNAVAILABLE,
              "Failed to add new requests to decode instance"});
 
         {
