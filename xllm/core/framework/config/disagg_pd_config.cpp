@@ -29,7 +29,7 @@ DEFINE_bool(enable_disagg_pd,
             "Whether to enable disaggregated prefill and decode execution.");
 
 DEFINE_bool(enable_pd_transfer_telemetry,
-            true,
+            false,
             "Emit request-level disaggregated KV transfer telemetry.");
 
 DEFINE_bool(
