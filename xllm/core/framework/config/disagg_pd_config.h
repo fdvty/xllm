@@ -59,7 +59,7 @@ class DisaggPDConfig final {
 
   PROPERTY(bool, enable_disagg_pd) = false;
 
-  PROPERTY(bool, enable_pd_transfer_telemetry) = true;
+  PROPERTY(bool, enable_pd_transfer_telemetry) = false;
 
   PROPERTY(bool, enable_pd_ooc) = false;
 

@@ -52,12 +52,12 @@ void expect_forced_defaults(const DisaggPDConfig& disagg_pd_config,
   EXPECT_FALSE(scheduler_config.enable_schedule_overlap());
 }
 
-TEST(DisaggPDConfigTest, ExposesTransferTelemetryWithEnabledDefault) {
+TEST(DisaggPDConfigTest, ExposesTransferTelemetryWithDisabledDefault) {
   const DisaggPDConfig config;
   const std::vector<std::string>& option_names =
       DisaggPDConfig::option_category().option_names;
 
-  EXPECT_TRUE(config.enable_pd_transfer_telemetry());
+  EXPECT_FALSE(config.enable_pd_transfer_telemetry());
   EXPECT_NE(std::find(option_names.begin(),
                       option_names.end(),
                       "enable_pd_transfer_telemetry"),
