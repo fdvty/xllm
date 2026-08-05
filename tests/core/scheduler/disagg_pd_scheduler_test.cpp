@@ -113,6 +113,8 @@ class TestDisaggPDScheduler final : public DisaggPDScheduler {
   bool pop_decode_request_for_test(std::shared_ptr<Request>* request) {
     return request_queue_.read(*request);
   }
+
+  void stop_request_admission_for_test() { stop_request_admission(); }
 };
 
 DisaggPDScheduler::Options make_options() {
@@ -239,6 +241,16 @@ TEST(DisaggPDSchedulerTest, CachesPrefillBlocksBeforeRelease) {
   EXPECT_EQ(matched_sequence->kv_state().shared_kv_blocks_num(), 2u);
   block_manager->deallocate(matched_sequence);
   release_prefix_cache(block_manager);
+}
+
+TEST(DisaggPDSchedulerTest, RejectsRequestsAfterShutdownStarts) {
+  FakeEngine engine(/*num_blocks=*/8, /*block_size=*/2);
+  TestDisaggPDScheduler scheduler(&engine, make_options());
+  std::shared_ptr<Request> request = make_request({1, 2, 3, 4});
+
+  scheduler.stop_request_admission_for_test();
+
+  EXPECT_FALSE(scheduler.add_request(request));
 }
 
 TEST(DisaggPDSchedulerTest, CacheSkipsExistingSharedBlocks) {

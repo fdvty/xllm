@@ -110,23 +110,24 @@ PDOOCScheduler::PDOOCScheduler(Engine* engine, const Options& options)
 }
 
 PDOOCScheduler::~PDOOCScheduler() {
-  // Clean up OOC-specific threads only
-  // Common threads (rpc_server_thread_, dispatch_thread_) are cleaned up by
-  // base class destructor
+  stop_request_admission();
+  offline_requests_to_dispatch_.enqueue(
+      std::make_pair(std::shared_ptr<Request>(), std::string()));
+  decode_send_pull_signal_pending_.store(false);
+  decode_send_pull_signal_cv_.notify_all();
+
+  XllmServer* rpc_server =
+      ServerRegistry::get_instance().try_get_server(server_name_);
+  if (rpc_server != nullptr) {
+    rpc_server->stop();
+  }
+
   if (dispatch_offline_thread_ && dispatch_offline_thread_->joinable()) {
     dispatch_offline_thread_->join();
   }
 
   if (send_pull_signal_thread_ && send_pull_signal_thread_->joinable()) {
     send_pull_signal_thread_->join();
-  }
-
-  LOG(INFO) << "Stop scheduler rpc server " << server_name_ << ".";
-  auto rpc_server = ServerRegistry::get_instance().get_server(server_name_);
-  if (rpc_server != nullptr) {
-    rpc_server->stop();
-
-    ServerRegistry::get_instance().unregister_server(server_name_);
   }
 }
 
@@ -708,8 +709,13 @@ void PDOOCScheduler::decode_send_pull_signal() {
   while (true) {
     // Wait until step thread triggers
     std::unique_lock<std::mutex> lock(decode_send_pull_signal_mtx_);
-    decode_send_pull_signal_cv_.wait(
-        lock, [this] { return !decode_send_pull_signal_pending_.load(); });
+    decode_send_pull_signal_cv_.wait(lock, [this] {
+      return is_stopping() || !decode_send_pull_signal_pending_.load();
+    });
+
+    if (is_stopping()) {
+      break;
+    }
 
     if (waiting_pull_finished_.load()) {
       // FIXME Add timeout for waiting_pull_finished_ in unreliable network
@@ -725,6 +731,9 @@ void PDOOCScheduler::decode_send_pull_signal() {
 
     // Select a P node
     std::string selected_prefill_instance = select_prefill_instance();
+    if (is_stopping()) {
+      break;
+    }
     VLOG(1) << "Selected prefill instance: " << selected_prefill_instance;
 
     // Build a stub
@@ -817,6 +826,9 @@ void PDOOCScheduler::dispatch_requests() {
     if (selected_instance.empty() && !stub) {
       int try_decode_count = 0;
       while (!stub) {
+        if (is_stopping()) {
+          return;
+        }
         if (try_decode_count == decode_inst_names_.size()) {
           LOG(FATAL) << "Can not connect to all decode instances.";
         }
@@ -1309,6 +1321,9 @@ void PDOOCScheduler::dispatch_offline_requests() {
 std::string PDOOCScheduler::select_decode_instance() {
   // get allocated decode instance list from Master
   while (decode_inst_names_.empty()) {
+    if (is_stopping()) {
+      return "";
+    }
     decode_inst_names_ = xservice_client_->get_static_decode_list();
     if (!decode_inst_names_.empty()) {
       LOG(INFO) << "Get PD decode instance list: "
@@ -1330,6 +1345,9 @@ std::string PDOOCScheduler::select_decode_instance() {
 std::string PDOOCScheduler::select_prefill_instance() {
   // get allocated prefill instance list from Master
   while (prefill_inst_names_.empty()) {
+    if (is_stopping()) {
+      return "";
+    }
     prefill_inst_names_ = xservice_client_->get_static_prefill_list();
     if (!prefill_inst_names_.empty()) {
       LOG(INFO) << "Get PD prefill instance list: "
