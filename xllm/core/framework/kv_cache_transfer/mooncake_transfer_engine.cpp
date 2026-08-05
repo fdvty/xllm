@@ -18,13 +18,30 @@ limitations under the License.
 #include <glog/logging.h>
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
 
+#include "common/pd_transfer_telemetry.h"
 #include "util/net.h"
 
 namespace xllm {
 
 namespace {
+
+void initialize_transfer_trace(MooncakeTransferTrace* trace) {
+  if (trace != nullptr) {
+    *trace = MooncakeTransferTrace{};
+  }
+}
+
+bool fail_transfer_trace(MooncakeTransferTrace* trace,
+                         const std::string& result) {
+  if (trace != nullptr) {
+    trace->complete_monotonic_ns = pd_transfer_monotonic_time_ns();
+    trace->result = result;
+  }
+  return false;
+}
 
 bool close_remote_session(MooncakeTransferEngineCore* core,
                           uint64_t cluster_id) {
@@ -412,22 +429,57 @@ void merge_block_ids(const std::vector<uint64_t>& src_blocks,
   block_lengths.emplace_back(current_length);
 }
 
+uint64_t MooncakeTransferEngine::transfer_bytes_for_blocks(
+    size_t block_count,
+    const std::vector<int64_t>& buf_ids) const {
+  std::vector<int64_t> active_buf_ids;
+  if (buf_ids.empty()) {
+    active_buf_ids.resize(buf_bytes_.size());
+    std::iota(active_buf_ids.begin(), active_buf_ids.end(), 0);
+  } else {
+    active_buf_ids = buf_ids;
+  }
+
+  uint64_t bytes_per_block = 0;
+  for (int64_t buf_id : active_buf_ids) {
+    if (buf_id < 0 || static_cast<size_t>(buf_id) >= buf_bytes_.size()) {
+      LOG(ERROR) << "buf_id out of range while calculating transfer bytes, "
+                 << "buf_id=" << buf_id << ", buf_cnt=" << buf_bytes_.size();
+      return 0;
+    }
+    const uint64_t buf_bytes = buf_bytes_[static_cast<size_t>(buf_id)];
+    if (bytes_per_block > std::numeric_limits<uint64_t>::max() - buf_bytes) {
+      LOG(ERROR) << "transfer bytes per block overflow";
+      return 0;
+    }
+    bytes_per_block += buf_bytes;
+  }
+  if (block_count > 0 &&
+      bytes_per_block > std::numeric_limits<uint64_t>::max() / block_count) {
+    LOG(ERROR) << "transfer byte count overflow";
+    return 0;
+  }
+  return bytes_per_block * static_cast<uint64_t>(block_count);
+}
+
 bool MooncakeTransferEngine::move_memory_blocks(
     const std::string& remote_addr,
     const std::vector<uint64_t>& src_blocks,
     const std::vector<uint64_t>& dst_blocks,
     const std::vector<int64_t>& buf_ids,
-    MoveOpcode move_opcode) {
+    MoveOpcode move_opcode,
+    MooncakeTransferTrace* trace) {
+  initialize_transfer_trace(trace);
   if (src_blocks.size() != dst_blocks.size()) {
     LOG(ERROR) << "src_blocks size must equal dst_blocks size, src="
                << src_blocks.size() << ", dst=" << dst_blocks.size();
-    return false;
+    return fail_transfer_trace(trace, "invalid_block_count");
   }
 
   SegmentHandle remote_handle = core_.get_handle(remote_addr);
   if (remote_handle == static_cast<SegmentHandle>(-1)) {
     LOG(ERROR) << "remote addr does not exist: " << remote_addr;
-    return false;
+    return fail_transfer_trace(trace, "remote_not_linked");
   }
 
   TransferEngine* engine = core_.engine();
@@ -435,14 +487,14 @@ bool MooncakeTransferEngine::move_memory_blocks(
       engine->getMetadata()->getSegmentDescByID(remote_handle);
   if (!remote_segment_desc) {
     LOG(ERROR) << "remote_segment_desc is null";
-    return false;
+    return fail_transfer_trace(trace, "missing_remote_segment");
   }
 
   std::shared_ptr<TransferMetadata::SegmentDesc> local_segment_desc =
       engine->getMetadata()->getSegmentDescByID(LOCAL_SEGMENT_ID);
   if (!local_segment_desc) {
     LOG(ERROR) << "local_segment_desc is null";
-    return false;
+    return fail_transfer_trace(trace, "missing_local_segment");
   }
 
   size_t local_buf_cnt = local_segment_desc->buffers.size();
@@ -450,12 +502,12 @@ bool MooncakeTransferEngine::move_memory_blocks(
   if (local_buf_cnt != remote_buf_cnt) {
     LOG(ERROR) << "buffer count mismatch, local=" << local_buf_cnt
                << ", remote=" << remote_buf_cnt;
-    return false;
+    return fail_transfer_trace(trace, "buffer_count_mismatch");
   }
   if (local_buf_cnt != buf_bytes_.size()) {
     LOG(ERROR) << "registered buffer count mismatch, local=" << local_buf_cnt
                << ", block_bytes=" << buf_bytes_.size();
-    return false;
+    return fail_transfer_trace(trace, "registered_buffer_count_mismatch");
   }
 
   std::vector<uint64_t> merged_src_blocks;
@@ -485,7 +537,7 @@ bool MooncakeTransferEngine::move_memory_blocks(
     if (buf_id < 0 || static_cast<size_t>(buf_id) >= local_buf_cnt) {
       LOG(ERROR) << "buf_id out of range, buf_id=" << buf_id
                  << ", buf_cnt=" << local_buf_cnt;
-      return false;
+      return fail_transfer_trace(trace, "invalid_buffer_id");
     }
 
     size_t local_buf_id = static_cast<size_t>(buf_id);
@@ -513,7 +565,7 @@ bool MooncakeTransferEngine::move_memory_blocks(
                            remote_block_id,
                            block_length,
                            buf_id)) {
-        return false;
+        return fail_transfer_trace(trace, "block_range_error");
       }
 
       uint64_t local_bias = local_block_id * buf_bytes;
@@ -532,61 +584,72 @@ bool MooncakeTransferEngine::move_memory_blocks(
   }
 
   if (entries.empty()) {
+    if (trace != nullptr) {
+      const int64_t now_ns = pd_transfer_monotonic_time_ns();
+      trace->submit_monotonic_ns = now_ns;
+      trace->complete_monotonic_ns = now_ns;
+      trace->result = "empty";
+    }
     return true;
+  }
+
+  if (trace != nullptr) {
+    for (const TransferRequest& entry : entries) {
+      trace->bytes += entry.length;
+    }
   }
 
   size_t batch_size = entries.size();
   auto batch_id = engine->allocateBatchID(batch_size);
+  if (trace != nullptr) {
+    trace->submit_monotonic_ns = pd_transfer_monotonic_time_ns();
+  }
   mooncake::Status s = engine->submitTransfer(batch_id, entries);
   if (!s.ok()) {
     LOG(ERROR) << "submit failed";
     engine->freeBatchID(batch_id);
-    return false;
+    return fail_transfer_trace(trace, "submit_failed");
   }
 
   TransferStatus status;
   bool completed = false;
-#if defined(USE_DCU)
   bool transfer_success = true;
-#endif
+  std::string transfer_result = "completed";
   while (!completed) {
     s = engine->getBatchTransferStatus(batch_id, status);
     if (!s.ok()) {
       LOG(ERROR) << "getBatchTransferStatus not ok";
-#if defined(USE_DCU)
       transfer_success = false;
-#endif
-      completed = true;
+      transfer_result = "status_error";
+      break;
     }
 
     if (status.s == TransferStatusEnum::COMPLETED) {
       completed = true;
     } else if (status.s == TransferStatusEnum::FAILED) {
       LOG(ERROR) << "getBatchTransferStatus failed";
-#if defined(USE_DCU)
       transfer_success = false;
-#endif
+      transfer_result = "failed";
       completed = true;
     } else if (status.s == TransferStatusEnum::TIMEOUT) {
       LOG(ERROR) << "Sync data transfer timeout";
-#if defined(USE_DCU)
       transfer_success = false;
-#endif
+      transfer_result = "timeout";
       completed = true;
     }
+  }
+  if (trace != nullptr) {
+    trace->complete_monotonic_ns = pd_transfer_monotonic_time_ns();
+    trace->result = transfer_result;
   }
 
   s = engine->freeBatchID(batch_id);
   if (!s.ok()) {
     LOG(ERROR) << "freeBatchID failed";
-    return false;
+    return fail_transfer_trace(trace, "free_failed");
   }
 
-#if defined(USE_DCU)
   return transfer_success;
-#else
-  return true;
-#endif
 }
 
 bool MooncakeTransferEngine::move_memory_by_global_offsets(
@@ -594,11 +657,18 @@ bool MooncakeTransferEngine::move_memory_by_global_offsets(
     const std::vector<uint64_t>& src_offsets,
     const std::vector<uint64_t>& dst_offsets,
     size_t transfer_size,
-    MoveOpcode move_opcode) {
+    MoveOpcode move_opcode,
+    MooncakeTransferTrace* trace) {
+  initialize_transfer_trace(trace);
+  if (src_offsets.size() != dst_offsets.size()) {
+    LOG(ERROR) << "src_offsets size must equal dst_offsets size, src="
+               << src_offsets.size() << ", dst=" << dst_offsets.size();
+    return fail_transfer_trace(trace, "invalid_offset_count");
+  }
   SegmentHandle remote_handle = core_.get_handle(remote_addr);
   if (remote_handle == static_cast<SegmentHandle>(-1)) {
     LOG(ERROR) << "remote addr does not exist: " << remote_addr;
-    return false;
+    return fail_transfer_trace(trace, "remote_not_linked");
   }
 
   TransferEngine* engine = core_.engine();
@@ -606,20 +676,20 @@ bool MooncakeTransferEngine::move_memory_by_global_offsets(
       engine->getMetadata()->getSegmentDescByID(remote_handle);
   if (!remote_segment_desc) {
     LOG(ERROR) << "remote_segment_desc is null";
-    return false;
+    return fail_transfer_trace(trace, "missing_remote_segment");
   }
 
   std::shared_ptr<TransferMetadata::SegmentDesc> local_segment_desc =
       engine->getMetadata()->getSegmentDescByID(LOCAL_SEGMENT_ID);
   if (!local_segment_desc) {
     LOG(ERROR) << "local_segment_desc is null";
-    return false;
+    return fail_transfer_trace(trace, "missing_local_segment");
   }
 
   if (local_segment_desc->buffers.empty() ||
       remote_segment_desc->buffers.empty()) {
     LOG(ERROR) << "No buffers registered for XTensor mode";
-    return false;
+    return fail_transfer_trace(trace, "missing_registered_buffer");
   }
 
   char* local_base =
@@ -647,42 +717,74 @@ bool MooncakeTransferEngine::move_memory_by_global_offsets(
     entries.push_back(entry);
   }
 
+  if (entries.empty()) {
+    if (trace != nullptr) {
+      const int64_t now_ns = pd_transfer_monotonic_time_ns();
+      trace->submit_monotonic_ns = now_ns;
+      trace->complete_monotonic_ns = now_ns;
+      trace->result = "empty";
+    }
+    return true;
+  }
+  if (trace != nullptr) {
+    if (transfer_size > 0 &&
+        entries.size() > std::numeric_limits<uint64_t>::max() / transfer_size) {
+      return fail_transfer_trace(trace, "transfer_byte_count_overflow");
+    }
+    trace->bytes = static_cast<uint64_t>(entries.size()) * transfer_size;
+  }
+
   size_t batch_size = entries.size();
   auto batch_id = engine->allocateBatchID(batch_size);
+  if (trace != nullptr) {
+    trace->submit_monotonic_ns = pd_transfer_monotonic_time_ns();
+  }
   mooncake::Status s = engine->submitTransfer(batch_id, entries);
   if (!s.ok()) {
     LOG(ERROR) << "submit failed in move_memory_by_global_offsets";
     engine->freeBatchID(batch_id);
-    return false;
+    return fail_transfer_trace(trace, "submit_failed");
   }
 
   TransferStatus status;
   bool completed = false;
+  bool transfer_success = true;
+  std::string transfer_result = "completed";
   while (!completed) {
     s = engine->getBatchTransferStatus(batch_id, status);
     if (!s.ok()) {
       LOG(ERROR) << "getBatchTransferStatus not ok";
-      completed = true;
+      transfer_success = false;
+      transfer_result = "status_error";
+      break;
     }
 
     if (status.s == TransferStatusEnum::COMPLETED) {
       completed = true;
     } else if (status.s == TransferStatusEnum::FAILED) {
       LOG(ERROR) << "getBatchTransferStatus failed";
+      transfer_success = false;
+      transfer_result = "failed";
       completed = true;
     } else if (status.s == TransferStatusEnum::TIMEOUT) {
       LOG(ERROR) << "Sync data transfer timeout";
+      transfer_success = false;
+      transfer_result = "timeout";
       completed = true;
     }
+  }
+  if (trace != nullptr) {
+    trace->complete_monotonic_ns = pd_transfer_monotonic_time_ns();
+    trace->result = transfer_result;
   }
 
   s = engine->freeBatchID(batch_id);
   if (!s.ok()) {
     LOG(ERROR) << "freeBatchID failed";
-    return false;
+    return fail_transfer_trace(trace, "free_failed");
   }
 
-  return true;
+  return transfer_success;
 }
 
 bool MooncakeTransferEngine::pull_memory_blocks(
@@ -704,9 +806,10 @@ bool MooncakeTransferEngine::push_memory_blocks(
     const std::string& remote_addr,
     const std::vector<uint64_t>& src_blocks,
     const std::vector<uint64_t>& dst_blocks,
-    const std::vector<int64_t>& buf_ids) {
+    const std::vector<int64_t>& buf_ids,
+    MooncakeTransferTrace* trace) {
   bool ret = move_memory_blocks(
-      remote_addr, src_blocks, dst_blocks, buf_ids, MoveOpcode::WRITE);
+      remote_addr, src_blocks, dst_blocks, buf_ids, MoveOpcode::WRITE, trace);
   if (!ret) {
     LOG(ERROR) << "Push memory blocks failed, ret = " << ret;
     return false;

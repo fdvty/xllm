@@ -38,6 +38,7 @@ cc_library(
     fixed_steps_scheduler.cpp
   DEPS
     :batch
+    :common
     :distributed_runtime
     :request
     :runtime

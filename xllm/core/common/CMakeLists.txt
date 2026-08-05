@@ -13,6 +13,7 @@ cc_library(
     metrics.h
     $<$<BOOL:${USE_NPU}>:mspti_helper.h>
     options.h
+    pd_transfer_telemetry.h
     rate_limiter.h
     types.h
     device_monitor.h
@@ -22,6 +23,7 @@ cc_library(
     metrics.cpp
     $<$<BOOL:${USE_NPU}>:mspti_helper.cpp>
     options.cpp
+    pd_transfer_telemetry.cpp
     rate_limiter.cpp
     device_monitor.cpp
   DEPS
@@ -37,6 +39,8 @@ cc_library(
     Boost::serialization
     cpprest
     etcd-cpp-api
+    glog::glog
+    nlohmann_json::nlohmann_json
     $<$<BOOL:${USE_MLU}>:torch_mlu>
     $<$<BOOL:${USE_MUSA}>:torch_musa>
 )

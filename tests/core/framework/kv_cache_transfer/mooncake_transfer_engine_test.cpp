@@ -108,6 +108,40 @@ TEST(MooncakeTransferEngineServiceTest, CloseSessionWithoutHandleReturnsTrue) {
   EXPECT_TRUE(response.ok());
 }
 
+TEST(MooncakeTransferEngineTest, RecordsPreSubmitValidationFailure) {
+  MooncakeTransferEngine engine(0, torch::Device(torch::kCPU));
+  MooncakeTransferTrace trace;
+
+  const bool success = engine.move_memory_blocks(
+      "", {1}, {}, {}, MooncakeTransferEngine::MoveOpcode::WRITE, &trace);
+
+  EXPECT_FALSE(success);
+  EXPECT_EQ(trace.submit_monotonic_ns, 0);
+  EXPECT_GT(trace.complete_monotonic_ns, 0);
+  EXPECT_EQ(trace.bytes, 0);
+  EXPECT_EQ(trace.result, "invalid_block_count");
+  EXPECT_FALSE(trace.cancelled);
+}
+
+TEST(MooncakeKVCacheTransferDefaultTest,
+     MergePreservesRequestTelemetryContext) {
+  MooncakeKVCacheTransferDefault transfer(
+      0, 0, torch::Device(torch::kCPU), "test");
+  const TransferKVInfo info = make_info(1, 1, 0);
+  const ParallelArgs parallel_args = make_args(0, 1, 1);
+  std::unordered_map<std::string, KVCacheTransfer::KVCacheInfo> merged_kv_infos;
+
+  transfer.merge_kv_blocks(merged_kv_infos, {info}, parallel_args);
+
+  ASSERT_EQ(merged_kv_infos.size(), 1U);
+  const KVCacheTransfer::KVCacheInfo& kv_info = merged_kv_infos.begin()->second;
+  ASSERT_EQ(kv_info.requests.size(), 1U);
+  EXPECT_EQ(kv_info.requests[0].request_id, info.request_id);
+  EXPECT_EQ(kv_info.requests[0].attempt_id, kLegacyPDAttemptId);
+  EXPECT_EQ(kv_info.requests[0].block_count, info.local_blocks_ids.size());
+  EXPECT_EQ(kv_info.requests[0].source_rank, 0);
+}
+
 #if defined(USE_MLU)
 TEST(MooncakeKVCacheTransferDefaultTest, OwnerRankMergesSingleDst) {
   MooncakeKVCacheTransferDefault transfer(

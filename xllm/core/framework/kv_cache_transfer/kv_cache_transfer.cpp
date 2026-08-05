@@ -37,6 +37,20 @@ limitations under the License.
 
 namespace xllm {
 
+namespace {
+
+void append_request_transfer_info(KVCacheTransfer::KVCacheInfo& kv_info,
+                                  const TransferKVInfo& transfer_info,
+                                  int32_t source_rank) {
+  KVCacheTransfer::RequestTransferInfo request_info;
+  request_info.request_id = transfer_info.request_id;
+  request_info.block_count = transfer_info.local_blocks_ids.size();
+  request_info.source_rank = source_rank;
+  kv_info.requests.emplace_back(std::move(request_info));
+}
+
+}  // namespace
+
 folly::SemiFuture<bool> KVCacheTransfer::pull_kv_blocks_async(
     const uint64_t src_cluster_id,
     const std::string& src_addr,
@@ -237,6 +251,7 @@ void KVCacheTransfer::merge_kv_blocks(
             kv_info.dst_linear_state_ids.end(),
             info.remote_linear_state_ids.begin(),
             info.remote_linear_state_ids.end());
+        append_request_transfer_info(kv_info, info, src_rank);
 
         // XTensor mode: copy destination offsets
         if (!info.dst_xtensor_layer_offsets.empty()) {
@@ -261,6 +276,7 @@ void KVCacheTransfer::merge_kv_blocks(
             merged_kv_infos[key].dst_linear_state_ids.end(),
             info.remote_linear_state_ids.begin(),
             info.remote_linear_state_ids.end());
+        append_request_transfer_info(merged_kv_infos[key], info, src_rank);
 
         // XTensor mode: merge destination offsets (append to each layer)
         if (!info.dst_xtensor_layer_offsets.empty()) {

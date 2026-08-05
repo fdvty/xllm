@@ -21,6 +21,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -33,6 +34,15 @@ namespace xllm {
 using namespace mooncake;
 
 class MooncakeTransferEngineService;
+
+struct MooncakeTransferTrace {
+  int64_t submit_monotonic_ns = 0;
+  int64_t complete_monotonic_ns = 0;
+  uint64_t bytes = 0;
+  std::string result = "not_submitted";
+  bool cancelled = false;
+  std::string cancellation_reason;
+};
 
 // Singleton core that holds the actual TransferEngine and brpc Server.
 // Multiple MooncakeTransferEngine instances share this core.
@@ -112,7 +122,8 @@ class MooncakeTransferEngine final {
                           const std::vector<uint64_t>& src_blocks,
                           const std::vector<uint64_t>& dst_blocks,
                           const std::vector<int64_t>& buf_ids,
-                          MoveOpcode move_opcode);
+                          MoveOpcode move_opcode,
+                          MooncakeTransferTrace* trace = nullptr);
 
   bool pull_memory_blocks(const std::string& remote_addr,
                           const std::vector<uint64_t>& src_blocks,
@@ -122,14 +133,19 @@ class MooncakeTransferEngine final {
   bool push_memory_blocks(const std::string& remote_addr,
                           const std::vector<uint64_t>& src_blocks,
                           const std::vector<uint64_t>& dst_blocks,
-                          const std::vector<int64_t>& buf_ids);
+                          const std::vector<int64_t>& buf_ids,
+                          MooncakeTransferTrace* trace = nullptr);
+
+  uint64_t transfer_bytes_for_blocks(size_t block_count,
+                                     const std::vector<int64_t>& buf_ids) const;
 
   // XTensor mode uses raw offsets in the GlobalXTensor region in buffer[0].
   bool move_memory_by_global_offsets(const std::string& remote_addr,
                                      const std::vector<uint64_t>& src_offsets,
                                      const std::vector<uint64_t>& dst_offsets,
                                      size_t transfer_size,
-                                     MoveOpcode move_opcode);
+                                     MoveOpcode move_opcode,
+                                     MooncakeTransferTrace* trace = nullptr);
 
   bool open_session(const uint64_t cluster_id, const std::string& remote_addr);
 

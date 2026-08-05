@@ -17,11 +17,14 @@ limitations under the License.
 
 #include <glog/logging.h>
 
-#include <chrono>
+#include <limits>
 #include <numeric>
+#include <set>
+#include <tuple>
 #include <unordered_set>
 
 #include "common/global_flags.h"
+#include "common/pd_transfer_telemetry.h"
 #include "core/framework/config/disagg_pd_config.h"
 
 #if defined(USE_NPU)
@@ -34,7 +37,6 @@ limitations under the License.
 #endif
 #endif
 
-#include "common/global_flags.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "framework/kv_cache/kv_cache_utils.h"
 #include "framework/kv_cache_transfer/push_route.h"
@@ -85,10 +87,15 @@ void merge_kv_info(
     std::unordered_map<std::string, KVCacheTransfer::KVCacheInfo>&
         merged_kv_infos,
     const TransferKVInfo& info,
-    const int32_t dst_rank) {
+    const int32_t dst_rank,
+    const int32_t source_rank) {
   uint64_t dst_cluster_id = info.remote_instance_info.cluster_ids[dst_rank];
   const std::string& dst_addr = info.remote_instance_info.addrs[dst_rank];
   std::string key = get_merge_key(dst_cluster_id, dst_addr);
+  KVCacheTransfer::RequestTransferInfo request_info;
+  request_info.request_id = info.request_id;
+  request_info.block_count = info.local_blocks_ids.size();
+  request_info.source_rank = source_rank;
 
   auto it = merged_kv_infos.find(key);
   if (it == merged_kv_infos.end()) {
@@ -105,6 +112,7 @@ void merge_kv_info(
                               info.remote_blocks_ids.end());
     merge_xtensor_offsets(kv_info.dst_xtensor_layer_offsets,
                           info.dst_xtensor_layer_offsets);
+    kv_info.requests.emplace_back(std::move(request_info));
     merged_kv_infos.emplace(key, std::move(kv_info));
     return;
   }
@@ -122,6 +130,140 @@ void merge_kv_info(
                     info.remote_blocks_ids.end());
   merge_xtensor_offsets(it->second.dst_xtensor_layer_offsets,
                         info.dst_xtensor_layer_offsets);
+  it->second.requests.emplace_back(std::move(request_info));
+}
+
+void log_request_transfer_event(
+    const KVCacheTransfer::RequestTransferInfo& request,
+    const KVCacheTransfer::KVCacheInfo* destination,
+    const std::string& event_name,
+    int64_t monotonic_ns,
+    int64_t layer_index,
+    int64_t num_layers,
+    uint64_t bytes,
+    const std::string& result,
+    bool cancelled,
+    const std::string& cancellation_reason) {
+  PDTransferTelemetryEvent event;
+  event.request_id = request.request_id;
+  event.attempt_id = request.attempt_id;
+  event.event = event_name;
+  event.monotonic_ns = monotonic_ns;
+  event.transfer_mode = "PUSH";
+  event.source_rank = request.source_rank;
+  if (destination != nullptr) {
+    event.destination_cluster_id = destination->dst_cluster_id;
+    event.destination_addr = destination->dst_addr;
+  }
+  event.layer_index = layer_index;
+  event.num_layers = num_layers;
+  event.bytes = bytes;
+  event.result = result;
+  event.cancelled = cancelled;
+  event.cancellation_reason = cancellation_reason;
+  log_pd_transfer_telemetry(event);
+}
+
+void log_last_layer_ready(
+    const std::unordered_map<std::string, KVCacheTransfer::KVCacheInfo>&
+        merged_kv_infos,
+    int64_t monotonic_ns,
+    int64_t layer_index,
+    int64_t num_layers) {
+  std::set<std::tuple<std::string, uint64_t, int32_t>> logged_requests;
+  for (const auto& [key, kv_info] : merged_kv_infos) {
+    (void)key;
+    for (const KVCacheTransfer::RequestTransferInfo& request :
+         kv_info.requests) {
+      const std::tuple<std::string, uint64_t, int32_t> request_key = {
+          request.request_id, request.attempt_id, request.source_rank};
+      if (!logged_requests.emplace(request_key).second) {
+        continue;
+      }
+      log_request_transfer_event(request,
+                                 /*destination=*/nullptr,
+                                 "last_layer_kv_ready",
+                                 monotonic_ns,
+                                 layer_index,
+                                 num_layers,
+                                 /*bytes=*/0,
+                                 "ready",
+                                 /*cancelled=*/false,
+                                 /*cancellation_reason=*/"");
+    }
+  }
+}
+
+uint64_t request_transfer_bytes(
+    const KVCacheTransfer::RequestTransferInfo& request,
+    uint64_t bytes_per_block) {
+  if (request.block_count > 0 &&
+      bytes_per_block >
+          std::numeric_limits<uint64_t>::max() / request.block_count) {
+    LOG(ERROR) << "request transfer byte count overflow, request_id="
+               << request.request_id;
+    return 0;
+  }
+  return request.block_count * bytes_per_block;
+}
+
+void log_last_layer_transfer(const KVCacheTransfer::KVCacheInfo& kv_info,
+                             const MooncakeTransferTrace& trace,
+                             int64_t layer_index,
+                             int64_t num_layers,
+                             uint64_t bytes_per_block) {
+  for (const KVCacheTransfer::RequestTransferInfo& request : kv_info.requests) {
+    const uint64_t bytes = request_transfer_bytes(request, bytes_per_block);
+    if (trace.submit_monotonic_ns > 0) {
+      log_request_transfer_event(request,
+                                 &kv_info,
+                                 "last_layer_transfer_submit",
+                                 trace.submit_monotonic_ns,
+                                 layer_index,
+                                 num_layers,
+                                 bytes,
+                                 "submitted",
+                                 trace.cancelled,
+                                 trace.cancellation_reason);
+    }
+    const int64_t complete_ns = trace.complete_monotonic_ns > 0
+                                    ? trace.complete_monotonic_ns
+                                    : pd_transfer_monotonic_time_ns();
+    log_request_transfer_event(request,
+                               &kv_info,
+                               "last_layer_transfer_complete",
+                               complete_ns,
+                               layer_index,
+                               num_layers,
+                               bytes,
+                               trace.result,
+                               trace.cancelled,
+                               trace.cancellation_reason);
+  }
+}
+
+struct PendingTransferTelemetry {
+  const KVCacheTransfer::KVCacheInfo* destination = nullptr;
+  MooncakeTransferTrace trace;
+};
+
+void log_last_layer_events(
+    const std::unordered_map<std::string, KVCacheTransfer::KVCacheInfo>&
+        merged_kv_infos,
+    const std::vector<PendingTransferTelemetry>& pending_transfers,
+    int64_t ready_ns,
+    int64_t layer_index,
+    int64_t num_layers,
+    uint64_t bytes_per_block) {
+  log_last_layer_ready(merged_kv_infos, ready_ns, layer_index, num_layers);
+  for (const PendingTransferTelemetry& pending : pending_transfers) {
+    CHECK(pending.destination != nullptr);
+    log_last_layer_transfer(*pending.destination,
+                            pending.trace,
+                            layer_index,
+                            num_layers,
+                            bytes_per_block);
+  }
 }
 
 }  // namespace
@@ -501,7 +643,7 @@ void MooncakeKVCacheTransferDefault::merge_kv_blocks(
     std::vector<int32_t> dst_ranks =
         get_dst_ranks(src_tp_rank, src_tp_size, dst_tp_size, dst_dp_rank);
     for (int32_t dst_rank : dst_ranks) {
-      merge_kv_info(merged_kv_infos, info, dst_rank);
+      merge_kv_info(merged_kv_infos, info, dst_rank, src_rank);
     }
   }
 #endif
@@ -527,9 +669,18 @@ bool MooncakeKVCacheTransferDefault::push_kv_blocks(
   }
 
   for (int64_t layer_index = 0; layer_index < num_layers; ++layer_index) {
+    const bool is_last_layer = layer_index == num_layers - 1;
+    std::vector<PendingTransferTelemetry> pending_transfers;
+    if (is_last_layer) {
+      pending_transfers.reserve(keys.size());
+    }
     layer_synchronizer->synchronize_layer(layer_index);
+    const int64_t ready_ns =
+        is_last_layer ? pd_transfer_monotonic_time_ns() : 0;
     std::vector<int64_t> layer_ids = {layer_index};
     std::vector<int64_t> buf_ids = get_buf_ids(layer_ids, is_spec_draft);
+    const uint64_t bytes_per_block =
+        is_last_layer ? mooncake_te_->transfer_bytes_for_blocks(1, buf_ids) : 0;
 
     for (const std::string& key : keys) {
       const KVCacheInfo& kv_info = merged_kv_infos.at(key);
@@ -537,14 +688,37 @@ bool MooncakeKVCacheTransferDefault::push_kv_blocks(
         continue;
       }
 
-      const auto step_start = std::chrono::steady_clock::now();
-      auto ret = mooncake_te_->push_memory_blocks(
-          kv_info.dst_addr, kv_info.src_blocks, kv_info.dst_blocks, buf_ids);
+      MooncakeTransferTrace trace;
+      MooncakeTransferTrace* trace_ptr = is_last_layer ? &trace : nullptr;
+      const bool ret = mooncake_te_->push_memory_blocks(kv_info.dst_addr,
+                                                        kv_info.src_blocks,
+                                                        kv_info.dst_blocks,
+                                                        buf_ids,
+                                                        trace_ptr);
+      if (is_last_layer) {
+        pending_transfers.push_back(PendingTransferTelemetry{&kv_info, trace});
+      }
       if (!ret) {
+        if (is_last_layer) {
+          log_last_layer_events(merged_kv_infos,
+                                pending_transfers,
+                                ready_ns,
+                                layer_index,
+                                num_layers,
+                                bytes_per_block);
+        }
         LOG(ERROR) << "Push kv blocks failed, layer = " << layer_index
                    << ", ret = " << ret;
         return false;
       }
+    }
+    if (is_last_layer) {
+      log_last_layer_events(merged_kv_infos,
+                            pending_transfers,
+                            ready_ns,
+                            layer_index,
+                            num_layers,
+                            bytes_per_block);
     }
   }
   return true;
@@ -758,9 +932,20 @@ bool MooncakeKVCacheTransferXTensor::push_kv_blocks_impl(
   }
 
   auto& allocator = XTensorAllocator::get_instance();
+  CHECK_GT(size_per_block_, 0);
+  CHECK_LE(static_cast<uint64_t>(size_per_block_),
+           std::numeric_limits<uint64_t>::max() / 2);
+  const uint64_t bytes_per_block = static_cast<uint64_t>(size_per_block_) * 2;
 
   for (int64_t layer_index = 0; layer_index < num_layers_; ++layer_index) {
+    const bool is_last_layer = layer_index == num_layers_ - 1;
+    std::vector<PendingTransferTelemetry> pending_transfers;
+    if (is_last_layer) {
+      pending_transfers.reserve(keys.size());
+    }
     layer_synchronizer->synchronize_layer(layer_index);
+    const int64_t ready_ns =
+        is_last_layer ? pd_transfer_monotonic_time_ns() : 0;
 
     for (const std::string& key : keys) {
       const KVCacheInfo& kv_info = merged_kv_infos.at(key);
@@ -818,17 +1003,38 @@ bool MooncakeKVCacheTransferXTensor::push_kv_blocks_impl(
       auto* xtensor_te =
           static_cast<MooncakeTransferEngine*>(mooncake_te_.get());
 
-      const auto step_start = std::chrono::steady_clock::now();
-      auto ret = xtensor_te->move_memory_by_global_offsets(
+      MooncakeTransferTrace trace;
+      MooncakeTransferTrace* trace_ptr = is_last_layer ? &trace : nullptr;
+      const bool ret = xtensor_te->move_memory_by_global_offsets(
           kv_info.dst_addr,
           src_offsets,
           dst_offsets,
           size_per_block_,
-          MooncakeTransferEngine::MoveOpcode::WRITE);
+          MooncakeTransferEngine::MoveOpcode::WRITE,
+          trace_ptr);
+      if (is_last_layer) {
+        pending_transfers.push_back(PendingTransferTelemetry{&kv_info, trace});
+      }
       if (!ret) {
+        if (is_last_layer) {
+          log_last_layer_events(merged_kv_infos,
+                                pending_transfers,
+                                ready_ns,
+                                layer_index,
+                                num_layers_,
+                                bytes_per_block);
+        }
         LOG(ERROR) << "push_kv_blocks_impl failed at layer " << layer_index;
         return false;
       }
+    }
+    if (is_last_layer) {
+      log_last_layer_events(merged_kv_infos,
+                            pending_transfers,
+                            ready_ns,
+                            layer_index,
+                            num_layers_,
+                            bytes_per_block);
     }
   }
 

@@ -4,6 +4,7 @@ cc_test(
   NAME
     common_test
   SRCS
+    pd_transfer_telemetry_test.cpp
     rate_limiter_test.cpp
   DEPS
     :config
