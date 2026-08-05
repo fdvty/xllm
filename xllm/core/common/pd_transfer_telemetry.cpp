@@ -15,10 +15,15 @@ limitations under the License.
 
 #include "common/pd_transfer_telemetry.h"
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 
 #include <chrono>
 #include <nlohmann/json.hpp>
+
+DEFINE_bool(enable_pd_transfer_telemetry,
+            true,
+            "Emit request-level disaggregated KV transfer telemetry.");
 
 namespace xllm {
 
@@ -30,6 +35,10 @@ int64_t pd_transfer_monotonic_time_ns() {
       .count();
 }
 
+bool pd_transfer_telemetry_enabled() {
+  return FLAGS_enable_pd_transfer_telemetry;
+}
+
 std::string serialize_pd_transfer_telemetry(
     const PDTransferTelemetryEvent& event) {
   nlohmann::json data;
@@ -38,6 +47,7 @@ std::string serialize_pd_transfer_telemetry(
   data["attempt_id"] = event.attempt_id;
   data["event"] = event.event;
   data["monotonic_ns"] = event.monotonic_ns;
+  data["transfer_backend"] = event.transfer_backend;
   data["transfer_mode"] = event.transfer_mode;
   data["source_rank"] = event.source_rank;
   data["destination_cluster_id"] = event.destination_cluster_id;
@@ -52,6 +62,9 @@ std::string serialize_pd_transfer_telemetry(
 }
 
 void log_pd_transfer_telemetry(const PDTransferTelemetryEvent& event) {
+  if (!pd_transfer_telemetry_enabled()) {
+    return;
+  }
   LOG(INFO) << kPDTransferTelemetryPrefix
             << serialize_pd_transfer_telemetry(event);
 }

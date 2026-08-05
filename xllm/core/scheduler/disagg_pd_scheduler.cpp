@@ -946,13 +946,17 @@ bool DisaggPDScheduler::decode_recv_first_generation(
     kv_cache_manager_->deallocate(request.get());
     return false;
   }
-  PDTransferTelemetryEvent telemetry_event;
-  telemetry_event.request_id = req_id;
-  telemetry_event.event = "decode_runnable";
-  telemetry_event.monotonic_ns = pd_transfer_monotonic_time_ns();
-  telemetry_event.transfer_mode = kv_cache_transfer_mode;
-  telemetry_event.result = "enqueued";
-  log_pd_transfer_telemetry(telemetry_event);
+  if (pd_transfer_telemetry_enabled()) {
+    PDTransferTelemetryEvent telemetry_event;
+    telemetry_event.request_id = req_id;
+    telemetry_event.event = "decode_runnable";
+    telemetry_event.monotonic_ns = pd_transfer_monotonic_time_ns();
+    telemetry_event.transfer_backend =
+        DisaggPDConfig::get_instance().kv_cache_transfer_type();
+    telemetry_event.transfer_mode = kv_cache_transfer_mode;
+    telemetry_event.result = "enqueued";
+    log_pd_transfer_telemetry(telemetry_event);
+  }
   return true;
 }
 
