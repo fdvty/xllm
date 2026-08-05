@@ -26,6 +26,7 @@ using namespace llm_datadist;
 struct RegisteredCache {
   KVCacheTensorRole role;
   Cache cache;
+  uint64_t bytes_per_block = 0;
 };
 
 using LayerRegisteredCaches = std::vector<std::vector<RegisteredCache>>;

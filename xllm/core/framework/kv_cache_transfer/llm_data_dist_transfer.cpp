@@ -19,12 +19,127 @@ limitations under the License.
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
+#include <set>
+#include <tuple>
 
 #include "common/macros.h"
+#include "common/pd_transfer_telemetry.h"
 #include "core/framework/config/disagg_pd_config.h"
 #include "util/net.h"
 
 namespace xllm {
+
+namespace {
+
+struct PendingLlmDataDistTelemetry {
+  const KVCacheTransfer::KVCacheInfo* destination = nullptr;
+  int64_t submit_ns = 0;
+  int64_t complete_ns = 0;
+  uint64_t bytes_per_block = 0;
+  std::string result = "not_submitted";
+};
+
+void log_llm_data_dist_event(
+    const KVCacheTransfer::RequestTransferInfo& request,
+    const KVCacheTransfer::KVCacheInfo* destination,
+    const std::string& event_name,
+    int64_t monotonic_ns,
+    int64_t layer_index,
+    int64_t num_layers,
+    uint64_t bytes,
+    const std::string& result) {
+  PDTransferTelemetryEvent event;
+  event.request_id = request.request_id;
+  event.attempt_id = request.attempt_id;
+  event.event = event_name;
+  event.monotonic_ns = monotonic_ns;
+  event.transfer_mode = "PUSH";
+  event.source_rank = request.source_rank;
+  if (destination != nullptr) {
+    event.destination_cluster_id = destination->dst_cluster_id;
+    event.destination_addr = destination->dst_addr;
+  }
+  event.layer_index = layer_index;
+  event.num_layers = num_layers;
+  event.bytes = bytes;
+  event.result = result;
+  log_pd_transfer_telemetry(event);
+}
+
+uint64_t request_transfer_bytes(
+    const KVCacheTransfer::RequestTransferInfo& request,
+    uint64_t bytes_per_block) {
+  if (request.block_count > 0 &&
+      bytes_per_block >
+          std::numeric_limits<uint64_t>::max() / request.block_count) {
+    LOG(ERROR) << "request transfer byte count overflow, request_id="
+               << request.request_id;
+    return 0;
+  }
+  return request.block_count * bytes_per_block;
+}
+
+void log_llm_data_dist_last_layer_events(
+    const std::unordered_map<std::string, KVCacheTransfer::KVCacheInfo>&
+        merged_kv_infos,
+    const std::vector<PendingLlmDataDistTelemetry>& pending_transfers,
+    int64_t ready_ns,
+    int64_t layer_index,
+    int64_t num_layers) {
+  std::set<std::tuple<std::string, uint64_t, int32_t>> logged_requests;
+  for (const auto& [key, kv_info] : merged_kv_infos) {
+    (void)key;
+    for (const KVCacheTransfer::RequestTransferInfo& request :
+         kv_info.requests) {
+      const auto request_key = std::make_tuple(
+          request.request_id, request.attempt_id, request.source_rank);
+      if (!logged_requests.emplace(request_key).second) {
+        continue;
+      }
+      log_llm_data_dist_event(request,
+                              /*destination=*/nullptr,
+                              "last_layer_kv_ready",
+                              ready_ns,
+                              layer_index,
+                              num_layers,
+                              /*bytes=*/0,
+                              "ready");
+    }
+  }
+
+  for (const PendingLlmDataDistTelemetry& pending : pending_transfers) {
+    CHECK(pending.destination != nullptr);
+    for (const KVCacheTransfer::RequestTransferInfo& request :
+         pending.destination->requests) {
+      const uint64_t bytes =
+          request_transfer_bytes(request, pending.bytes_per_block);
+      if (pending.submit_ns > 0) {
+        log_llm_data_dist_event(request,
+                                pending.destination,
+                                "last_layer_transfer_submit",
+                                pending.submit_ns,
+                                layer_index,
+                                num_layers,
+                                bytes,
+                                "submitted");
+      }
+      const int64_t complete_ns = pending.complete_ns > 0
+                                      ? pending.complete_ns
+                                      : pd_transfer_monotonic_time_ns();
+      log_llm_data_dist_event(request,
+                              pending.destination,
+                              "last_layer_transfer_complete",
+                              complete_ns,
+                              layer_index,
+                              num_layers,
+                              bytes,
+                              pending.result);
+    }
+  }
+}
+
+}  // namespace
 
 const std::map<torch::ScalarType, ge::DataType> kScalarTypeToDtype = {
     {torch::kBool, ge::DT_BOOL},
@@ -226,7 +341,13 @@ RegisteredCache LlmDataDistTransfer::register_cache_tensor(
   auto tensor_addr = reinterpret_cast<uintptr_t>(tensor.data_ptr());
   std::vector<uint64_t> addrs = {static_cast<uint64_t>(tensor_addr)};
 
-  RegisteredCache registered_cache{cache_tensor.role, Cache{}};
+  CHECK_GT(tensor.size(0), 0) << "KV cache block dimension must be positive";
+  CHECK_EQ(tensor.nbytes() % static_cast<uint64_t>(tensor.size(0)), 0)
+      << "KV cache bytes must divide evenly across blocks";
+  RegisteredCache registered_cache{
+      cache_tensor.role,
+      Cache{},
+      tensor.nbytes() / static_cast<uint64_t>(tensor.size(0))};
   registered_cache.cache.tensor_addrs = {tensor_addr};
 
   CacheDesc& desc = registered_cache.cache.cache_desc;
@@ -279,16 +400,29 @@ bool LlmDataDistTransfer::push_layer_registered_caches(
   }
 
   bool result = true;
-  for (int64_t layer_index = 0;
-       layer_index < static_cast<int64_t>(layer_registered_caches.size());
-       ++layer_index) {
+  const int64_t num_layers =
+      static_cast<int64_t>(layer_registered_caches.size());
+  for (int64_t layer_index = 0; layer_index < num_layers; ++layer_index) {
+    const bool is_last_layer = layer_index == num_layers - 1;
+    std::vector<PendingLlmDataDistTelemetry> pending_transfers;
+    if (is_last_layer) {
+      pending_transfers.reserve(keys.size());
+    }
     // Wait for the KV cache computation of this layer to complete.
     layer_synchronizer->synchronize_layer(layer_index);
+    const int64_t ready_ns =
+        is_last_layer ? pd_transfer_monotonic_time_ns() : 0;
     for (const std::string& key : keys) {
       const KVCacheInfo& kv_info = merged_kv_infos.at(key);
       if (kv_info.src_blocks.empty() && kv_info.src_linear_state_ids.empty()) {
         continue;
       }
+
+      PendingLlmDataDistTelemetry pending;
+      if (is_last_layer) {
+        pending.destination = &kv_info;
+      }
+      bool destination_result = true;
 
       for (const RegisteredCache& registered_cache :
            layer_registered_caches[layer_index]) {
@@ -314,6 +448,17 @@ bool LlmDataDistTransfer::push_layer_registered_caches(
         ext_param.dst_layer_range = {0, 0};
         ext_param.tensor_num_per_layer = 1;
 
+        if (is_last_layer) {
+          if (pending.submit_ns == 0) {
+            pending.submit_ns = pd_transfer_monotonic_time_ns();
+          }
+          if (!linear_state_cache) {
+            CHECK_LE(pending.bytes_per_block,
+                     std::numeric_limits<uint64_t>::max() -
+                         registered_cache.bytes_per_block);
+            pending.bytes_per_block += registered_cache.bytes_per_block;
+          }
+        }
         auto ret = llm_data_dist_->PushKvBlocks(
             registered_cache.cache, cache_index, src_ids, dst_ids, ext_param);
         if (ret != LLM_SUCCESS) {
@@ -321,8 +466,21 @@ bool LlmDataDistTransfer::push_layer_registered_caches(
                      << ", role = " << registered_cache.role.to_string()
                      << ", ret = " << std::hex << ret;
           result = false;
+          destination_result = false;
         }
       }
+      if (is_last_layer && pending.submit_ns > 0) {
+        pending.complete_ns = pd_transfer_monotonic_time_ns();
+        pending.result = destination_result ? "completed" : "failed";
+        pending_transfers.emplace_back(std::move(pending));
+      }
+    }
+    if (is_last_layer) {
+      log_llm_data_dist_last_layer_events(merged_kv_infos,
+                                          pending_transfers,
+                                          ready_ns,
+                                          layer_index,
+                                          num_layers);
     }
   }
   return result;

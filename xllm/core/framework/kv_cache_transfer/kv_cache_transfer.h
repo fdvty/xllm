@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <folly/futures/Future.h>
 
+#include "common/pd_transfer_telemetry.h"
 #include "common/types.h"
 #include "framework/kv_cache/kv_cache.h"
 #if defined(USE_NPU)
@@ -58,6 +59,13 @@ std::vector<TransferKVInfo> filter_kv_split_infos(
 
 class KVCacheTransfer {
  public:
+  struct RequestTransferInfo {
+    std::string request_id;
+    uint64_t attempt_id = kLegacyPDAttemptId;
+    uint64_t block_count = 0;
+    int32_t source_rank = -1;
+  };
+
   struct KVCacheInfo {
     uint64_t dst_cluster_id;
     std::string dst_addr;
@@ -65,6 +73,7 @@ class KVCacheTransfer {
     std::vector<uint64_t> dst_blocks;
     std::vector<uint64_t> src_linear_state_ids;
     std::vector<uint64_t> dst_linear_state_ids;
+    std::vector<RequestTransferInfo> requests;
 
     // XTensor mode: destination offsets from D-node (per-layer)
     // dst_xtensor_layer_offsets[layer_id] = {k_offsets, v_offsets}
