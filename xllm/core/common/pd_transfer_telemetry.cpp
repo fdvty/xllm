@@ -15,15 +15,12 @@ limitations under the License.
 
 #include "common/pd_transfer_telemetry.h"
 
-#include <gflags/gflags.h>
 #include <glog/logging.h>
 
 #include <chrono>
 #include <nlohmann/json.hpp>
 
-DEFINE_bool(enable_pd_transfer_telemetry,
-            true,
-            "Emit request-level disaggregated KV transfer telemetry.");
+#include "core/framework/config/disagg_pd_config.h"
 
 namespace xllm {
 
@@ -36,7 +33,7 @@ int64_t pd_transfer_monotonic_time_ns() {
 }
 
 bool pd_transfer_telemetry_enabled() {
-  return FLAGS_enable_pd_transfer_telemetry;
+  return DisaggPDConfig::get_instance().enable_pd_transfer_telemetry();
 }
 
 std::string serialize_pd_transfer_telemetry(

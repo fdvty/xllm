@@ -17,7 +17,9 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/scheduler_config.h"
@@ -48,6 +50,18 @@ void expect_forced_defaults(const DisaggPDConfig& disagg_pd_config,
   EXPECT_FALSE(disagg_pd_config.enable_pd_ooc());
   EXPECT_EQ(kv_cache_config.kv_cache_dtype(), "auto");
   EXPECT_FALSE(scheduler_config.enable_schedule_overlap());
+}
+
+TEST(DisaggPDConfigTest, ExposesTransferTelemetryWithEnabledDefault) {
+  const DisaggPDConfig config;
+  const std::vector<std::string>& option_names =
+      DisaggPDConfig::option_category().option_names;
+
+  EXPECT_TRUE(config.enable_pd_transfer_telemetry());
+  EXPECT_NE(std::find(option_names.begin(),
+                      option_names.end(),
+                      "enable_pd_transfer_telemetry"),
+            option_names.end());
 }
 
 TEST(DisaggPDConfigTest, KeepsMluPrefixCacheForPrefillSideRoles) {

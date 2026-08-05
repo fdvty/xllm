@@ -19,6 +19,8 @@ limitations under the License.
 
 #include <nlohmann/json.hpp>
 
+#include "core/framework/config/disagg_pd_config.h"
+
 namespace xllm {
 
 TEST(PDTransferTelemetryTest, SerializesStableSchemaAndEscapesRequestId) {
@@ -64,6 +66,15 @@ TEST(PDTransferTelemetryTest, MonotonicTimestampDoesNotGoBackwards) {
 
   EXPECT_GT(first, 0);
   EXPECT_GE(second, first);
+}
+
+TEST(PDTransferTelemetryTest, HonorsDisaggregatedPDConfigSwitch) {
+  DisaggPDConfig& config = DisaggPDConfig::get_instance();
+  const bool original_value = config.enable_pd_transfer_telemetry();
+
+  config.enable_pd_transfer_telemetry(false);
+  EXPECT_FALSE(pd_transfer_telemetry_enabled());
+  config.enable_pd_transfer_telemetry(original_value);
 }
 
 }  // namespace xllm
