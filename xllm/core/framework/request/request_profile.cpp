@@ -28,7 +28,7 @@ namespace xllm {
 RequestProfile::RequestProfile() : RequestProfile(globally_enabled()) {}
 
 RequestProfile::RequestProfile(bool enabled)
-    : enabled_(enabled), created_ns_(now_ns()) {}
+    : enabled_(enabled), created_ns_(enabled ? now_ns() : 0) {}
 
 bool RequestProfile::globally_enabled() {
   static const bool enabled = util::get_bool_env("XLLM_REQUEST_PROFILE", false);
