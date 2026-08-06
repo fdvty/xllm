@@ -42,6 +42,14 @@ struct PDTransferTelemetryEvent {
   std::string cancellation_reason;
 };
 
+struct PDTransferTelemetryStats {
+  uint64_t enqueued_events = 0;
+  uint64_t emitted_events = 0;
+  uint64_t dropped_events = 0;
+  uint64_t sampled_out_events = 0;
+  uint64_t pending_events = 0;
+};
+
 int64_t pd_transfer_monotonic_time_ns();
 
 bool pd_transfer_telemetry_enabled();
@@ -49,6 +57,10 @@ bool pd_transfer_telemetry_enabled();
 std::string serialize_pd_transfer_telemetry(
     const PDTransferTelemetryEvent& event);
 
-void log_pd_transfer_telemetry(const PDTransferTelemetryEvent& event);
+void log_pd_transfer_telemetry(PDTransferTelemetryEvent event);
+
+PDTransferTelemetryStats pd_transfer_telemetry_stats();
+
+void flush_pd_transfer_telemetry();
 
 }  // namespace xllm

@@ -172,6 +172,9 @@ DEFINE_COUNTER(kv_event_zmq_publish_failure_total,
                "Total number of failed KV cache event ZMQ publishes");
 DEFINE_COUNTER(kv_event_zmq_snapshot_publish_total,
                "Total number of KV cache snapshots published through ZMQ");
+DEFINE_COUNTER(pd_transfer_telemetry_dropped_total,
+               "Total number of P/D transfer telemetry events dropped by the "
+               "bounded queue");
 
 // speculative metrics
 DEFINE_COUNTER(speculative_execution_latency_seconds_draft,

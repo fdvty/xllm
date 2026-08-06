@@ -66,7 +66,7 @@ void log_llm_data_dist_event(
   event.num_layers = num_layers;
   event.bytes = bytes;
   event.result = result;
-  log_pd_transfer_telemetry(event);
+  log_pd_transfer_telemetry(std::move(event));
 }
 
 uint64_t request_transfer_bytes(

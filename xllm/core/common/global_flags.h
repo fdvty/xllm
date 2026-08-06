@@ -153,6 +153,12 @@ DECLARE_bool(enable_disagg_pd);
 
 DECLARE_bool(enable_pd_transfer_telemetry);
 
+DECLARE_int32(pd_transfer_telemetry_queue_capacity);
+
+DECLARE_int32(pd_transfer_telemetry_batch_size);
+
+DECLARE_double(pd_transfer_telemetry_sample_rate);
+
 DECLARE_bool(enable_pd_ooc);
 
 DECLARE_int32(disagg_pd_port);

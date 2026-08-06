@@ -955,7 +955,7 @@ bool DisaggPDScheduler::decode_recv_first_generation(
         DisaggPDConfig::get_instance().kv_cache_transfer_type();
     telemetry_event.transfer_mode = kv_cache_transfer_mode;
     telemetry_event.result = "enqueued";
-    log_pd_transfer_telemetry(telemetry_event);
+    log_pd_transfer_telemetry(std::move(telemetry_event));
   }
   return true;
 }
