@@ -48,6 +48,9 @@ class DisaggPDConfig final {
         "DISAGGREGATED PREFILL-DECODE OPTIONS",
         {"enable_disagg_pd",
          "enable_pd_transfer_telemetry",
+         "pd_transfer_telemetry_queue_capacity",
+         "pd_transfer_telemetry_batch_size",
+         "pd_transfer_telemetry_sample_rate",
          "enable_pd_ooc",
          "disagg_pd_port",
          "instance_role",
@@ -60,6 +63,12 @@ class DisaggPDConfig final {
   PROPERTY(bool, enable_disagg_pd) = false;
 
   PROPERTY(bool, enable_pd_transfer_telemetry) = false;
+
+  PROPERTY(int32_t, pd_transfer_telemetry_queue_capacity) = 4096;
+
+  PROPERTY(int32_t, pd_transfer_telemetry_batch_size) = 64;
+
+  PROPERTY(double, pd_transfer_telemetry_sample_rate) = 1.0;
 
   PROPERTY(bool, enable_pd_ooc) = false;
 

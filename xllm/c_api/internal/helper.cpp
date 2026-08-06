@@ -20,6 +20,7 @@ limitations under the License.
 #include <string>
 
 #include "core/common/global_flags.h"
+#include "core/common/pd_transfer_telemetry.h"
 #include "core/framework/config/rec_config.h"
 #include "core/util/env_var.h"
 #include "core/util/rec_model_utils.h"
@@ -67,6 +68,7 @@ void shutdown_log() {
 
   pthread_mutex_lock(&g_log_init_mutex);
   if (g_glog_inited.load(std::memory_order_relaxed)) {
+    flush_pd_transfer_telemetry();
     google::ShutdownGoogleLogging();
     g_glog_inited.store(false, std::memory_order_release);
   }

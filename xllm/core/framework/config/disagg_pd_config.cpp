@@ -32,6 +32,18 @@ DEFINE_bool(enable_pd_transfer_telemetry,
             false,
             "Emit request-level disaggregated KV transfer telemetry.");
 
+DEFINE_int32(pd_transfer_telemetry_queue_capacity,
+             4096,
+             "Maximum number of queued P/D transfer telemetry events.");
+
+DEFINE_int32(pd_transfer_telemetry_batch_size,
+             64,
+             "Maximum P/D transfer telemetry events consumed per batch.");
+
+DEFINE_double(pd_transfer_telemetry_sample_rate,
+              1.0,
+              "P/D transfer telemetry request sample rate in [0, 1].");
+
 DEFINE_bool(
     enable_pd_ooc,
     false,
@@ -71,6 +83,9 @@ bool supports_prefix_cache(const std::string& instance_role) {
 void DisaggPDConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_disagg_pd);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_pd_transfer_telemetry);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(pd_transfer_telemetry_queue_capacity);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(pd_transfer_telemetry_batch_size);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(pd_transfer_telemetry_sample_rate);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_pd_ooc);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(disagg_pd_port);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(instance_role);
@@ -83,6 +98,9 @@ void DisaggPDConfig::from_flags() {
 void DisaggPDConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_disagg_pd);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_pd_transfer_telemetry);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(pd_transfer_telemetry_queue_capacity);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(pd_transfer_telemetry_batch_size);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(pd_transfer_telemetry_sample_rate);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_pd_ooc);
   XLLM_CONFIG_ASSIGN_FROM_JSON(disagg_pd_port);
   XLLM_CONFIG_ASSIGN_FROM_JSON(instance_role);
@@ -98,6 +116,12 @@ void DisaggPDConfig::append_config_json(
       config_json, default_config, enable_disagg_pd);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_pd_transfer_telemetry);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, pd_transfer_telemetry_queue_capacity);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, pd_transfer_telemetry_batch_size);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, pd_transfer_telemetry_sample_rate);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_pd_ooc);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(

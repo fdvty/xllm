@@ -163,7 +163,7 @@ void log_request_transfer_event(
   event.result = result;
   event.cancelled = cancelled;
   event.cancellation_reason = cancellation_reason;
-  log_pd_transfer_telemetry(event);
+  log_pd_transfer_telemetry(std::move(event));
 }
 
 void log_last_layer_ready(

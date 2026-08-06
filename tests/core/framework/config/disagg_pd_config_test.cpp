@@ -62,6 +62,21 @@ TEST(DisaggPDConfigTest, ExposesTransferTelemetryWithDisabledDefault) {
                       option_names.end(),
                       "enable_pd_transfer_telemetry"),
             option_names.end());
+  EXPECT_EQ(config.pd_transfer_telemetry_queue_capacity(), 4096);
+  EXPECT_EQ(config.pd_transfer_telemetry_batch_size(), 64);
+  EXPECT_DOUBLE_EQ(config.pd_transfer_telemetry_sample_rate(), 1.0);
+  EXPECT_NE(std::find(option_names.begin(),
+                      option_names.end(),
+                      "pd_transfer_telemetry_queue_capacity"),
+            option_names.end());
+  EXPECT_NE(std::find(option_names.begin(),
+                      option_names.end(),
+                      "pd_transfer_telemetry_batch_size"),
+            option_names.end());
+  EXPECT_NE(std::find(option_names.begin(),
+                      option_names.end(),
+                      "pd_transfer_telemetry_sample_rate"),
+            option_names.end());
 }
 
 TEST(DisaggPDConfigTest, KeepsMluPrefixCacheForPrefillSideRoles) {
