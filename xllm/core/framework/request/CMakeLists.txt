@@ -9,6 +9,7 @@ cc_library(
     finish_reason.h
     incremental_decoder.h
     request_base.h
+    request_profile.h
     request.h
     dit_request.h
     request_output.h
@@ -30,6 +31,7 @@ cc_library(
     finish_reason.cpp
     incremental_decoder.cpp
     request.cpp
+    request_profile.cpp
     dit_request.cpp
     request_output.cpp
     dit_request_output.cpp
@@ -51,9 +53,11 @@ cc_library(
     :tokenizer
     :chat_template
     :multimodal
+    util
     glog::glog
     absl::strings
     absl::time
+    nlohmann_json::nlohmann_json
     proto::xllm_proto
     torch
 )

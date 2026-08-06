@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "common.pb.h"
 #include "request_base.h"
+#include "core/framework/request/request_profile.h"
 #include "request_state.h"
 #include "sequences_group.h"
 #include "stopping_checker.h"
@@ -65,12 +66,16 @@ class Request : public RequestBase {
   bool last_token_handled() const { return state_.handle_last_token_done; }
 
   size_t total_num_blocks();
+  size_t total_num_kv_cache_tokens();
 
   void set_preempted() { state_.preempted = true; }
 
   bool preempted() const { return state_.preempted; }
 
   void log_statistic(double total_latency);
+
+  RequestProfile& profile() { return profile_; }
+  const RequestProfile& profile() const { return profile_; }
 
   void log_error_statistic(Status status);
 
@@ -163,6 +168,7 @@ class Request : public RequestBase {
 
  private:
   RequestState state_;
+  RequestProfile profile_;
   // list of sequences to generate completions for the prompt
   // use deque instead of vector to avoid no-copy move for Sequence
   //  std::deque<Sequence> sequences;
