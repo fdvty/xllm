@@ -386,6 +386,12 @@ class ContinuousScheduler : public Scheduler {
 
   void step_with_pd_ooc(std::vector<Batch>& batch);
 
+  void record_batch_profile(const std::vector<Batch>& batches);
+  void record_engine_step_profile(
+      const std::vector<Batch>& batches,
+      const std::vector<std::shared_ptr<Request>>& requests,
+      int64_t duration_ns);
+
   void refresh_sequences_from_requests(
       const std::vector<std::shared_ptr<Request>>& requests,
       std::vector<Sequence*>& sequences) const;

@@ -56,6 +56,16 @@ target_link_options(request_prefix_cache_tokens_test
 
 cc_test(
   NAME
+    request_profile_test
+  SRCS
+    request_profile_test.cpp
+  DEPS
+    :request
+    GTest::gtest_main
+)
+
+cc_test(
+  NAME
     sequence_kv_state_test
   SRCS
     sequence_kv_state_test.cpp

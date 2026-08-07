@@ -78,6 +78,47 @@ size_t get_sequence_free_blocks_for_rank(KVCacheManager* kv_cache_manager,
   return util::max(free_blocks);
 }
 
+struct BatchProfileSummary {
+  size_t sequences = 0;
+  size_t tokens = 0;
+  std::string type = "EMPTY";
+};
+
+BatchProfileSummary summarize_batch_profile(const std::vector<Batch>& batches) {
+  BatchProfileSummary summary;
+  bool has_prefill = false;
+  bool has_chunked_prefill = false;
+  bool has_decode = false;
+  bool has_mixed = false;
+  for (const auto& batch : batches) {
+    if (batch.empty()) {
+      continue;
+    }
+    summary.sequences += batch.size();
+    for (uint32_t budget : batch.get_allowed_max_tokens()) {
+      if (budget != std::numeric_limits<uint32_t>::max()) {
+        summary.tokens += budget;
+      }
+    }
+    const BatchForwardType& type = batch.batch_forward_type();
+    has_prefill |= type.is_prefill();
+    has_chunked_prefill |= type.is_chunked_prefill();
+    has_decode |= type.is_decode();
+    has_mixed |= type.is_mixed();
+  }
+  if (has_mixed || (has_prefill && has_decode) ||
+      (has_chunked_prefill && has_decode)) {
+    summary.type = "MIXED";
+  } else if (has_decode) {
+    summary.type = "DECODE";
+  } else if (has_chunked_prefill) {
+    summary.type = "CHUNKED_PREFILL";
+  } else if (has_prefill) {
+    summary.type = "PREFILL";
+  }
+  return summary;
+}
+
 }  // namespace
 
 namespace {
@@ -173,10 +214,50 @@ bool ContinuousScheduler::add_request(std::shared_ptr<Request>& request) {
   kv_cache_manager_->prefetch_from_storage(request);
 
   if (request_queue_.write(request)) {
+    request->profile().mark_enqueued();
     return true;
   }
 
   return false;
+}
+
+void ContinuousScheduler::record_batch_profile(
+    const std::vector<Batch>& batches) {
+  if (!RequestProfile::globally_enabled()) {
+    return;
+  }
+  const BatchProfileSummary summary = summarize_batch_profile(batches);
+  if (summary.type == "EMPTY") {
+    return;
+  }
+  for (const auto& request : running_requests_) {
+    if (request == nullptr) {
+      continue;
+    }
+    request->profile().mark_batch_selected(summary.sequences,
+                                           summary.tokens,
+                                           summary.type,
+                                           request->total_num_kv_cache_tokens(),
+                                           request->total_num_blocks());
+  }
+}
+
+void ContinuousScheduler::record_engine_step_profile(
+    const std::vector<Batch>& batches,
+    const std::vector<std::shared_ptr<Request>>& requests,
+    int64_t duration_ns) {
+  if (!RequestProfile::globally_enabled()) {
+    return;
+  }
+  const BatchProfileSummary summary = summarize_batch_profile(batches);
+  if (summary.type == "EMPTY") {
+    return;
+  }
+  for (const auto& request : requests) {
+    if (request != nullptr) {
+      request->profile().mark_engine_step(duration_ns, summary.type);
+    }
+  }
 }
 
 void ContinuousScheduler::get_latency_budget_and_request_order(
@@ -1140,6 +1221,8 @@ std::vector<Batch> ContinuousScheduler::prepare_batch() {
                            running_sequences_budgets_,
                            kv_cache_manager_->get_swap_block_transfer_infos());
 
+  record_batch_profile(batches);
+
   bool is_batches_empty =
       (std::all_of(batches.begin(), batches.end(), [](const Batch& one_batch) {
         return one_batch.empty();
@@ -1252,7 +1335,14 @@ void ContinuousScheduler::step(const absl::Duration& timeout) {
     }
 
     if (!options_.enable_pd_ooc()) {
+      auto start = std::chrono::steady_clock::now();
       engine_->step(batch);
+      auto end = std::chrono::steady_clock::now();
+      record_engine_step_profile(
+          batch,
+          running_requests_,
+          std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+              .count());
     } else {
       step_with_pd_ooc(batch);
     }
@@ -1281,7 +1371,14 @@ void ContinuousScheduler::step_with_schedule_overlap(
   }
 
   if (!cur_batch_all_empty) {
+    auto start = std::chrono::steady_clock::now();
     engine_->step(batch);
+    auto end = std::chrono::steady_clock::now();
+    record_engine_step_profile(
+        batch,
+        running_requests_,
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+            .count());
   }
 
   // producer-consumer mode, make sure only one step is scheduled in advance
@@ -1311,7 +1408,14 @@ void ContinuousScheduler::generate() {
     }
 
     // run inference for the batch
+    auto start = std::chrono::steady_clock::now();
     engine_->step(batch);
+    auto end = std::chrono::steady_clock::now();
+    record_engine_step_profile(
+        batch,
+        running_requests_,
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+            .count());
 
     // process request output in batch
     process_batch_output(false);
@@ -1496,6 +1600,11 @@ void ContinuousScheduler::step_with_pd_ooc(std::vector<Batch>& batch) {
   auto start = std::chrono::high_resolution_clock::now();
   engine_->step(batch);
   auto end = std::chrono::high_resolution_clock::now();
+  record_engine_step_profile(
+      batch,
+      running_requests_,
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+          .count());
   double duration_ms =
       std::chrono::duration_cast<std::chrono::microseconds>(end - start)
           .count() /

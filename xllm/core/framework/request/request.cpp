@@ -112,6 +112,15 @@ void Request::log_statistic(double total_latency) {
       break;
     }
   }
+  if (profile_.enabled()) {
+    LOG(INFO) << "XLLM_REQUEST_PROFILE "
+              << profile_.serialize_completed(request_id_,
+                                               x_request_id_,
+                                               service_request_id_,
+                                               source_xservice_addr_,
+                                               total_latency * 1000.0,
+                                               "ok");
+  }
 }
 
 void Request::log_error_statistic(Status status) {
@@ -129,12 +138,29 @@ void Request::log_error_statistic(Status status) {
               << "status_code : " << static_cast<int32_t>(status.code()) << ", "
               << "status_msg : " << status.message();
   }
+  if (profile_.enabled()) {
+    LOG(INFO) << "XLLM_REQUEST_PROFILE "
+              << profile_.serialize_completed(request_id_,
+                                               x_request_id_,
+                                               service_request_id_,
+                                               source_xservice_addr_,
+                                               0.0,
+                                               "error");
+  }
 }
 
 size_t Request::total_num_blocks() {
   size_t num = 0;
   for (auto& seq : sequences()) {
     num += seq->kv_state().num_kv_blocks();
+  }
+  return num;
+}
+
+size_t Request::total_num_kv_cache_tokens() {
+  size_t num = 0;
+  for (auto& seq : sequences()) {
+    num += seq->kv_state().kv_cache_tokens_num();
   }
   return num;
 }
