@@ -16,12 +16,16 @@ limitations under the License.
 #include "framework/kv_cache_transfer/mooncake_transfer_engine.h"
 
 #include <brpc/controller.h>
+#include <brpc/server.h>
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <future>
 #include <unordered_map>
 #include <vector>
 
 #include "framework/kv_cache_transfer/kv_cache_transfer.h"
+#include "util/net.h"
 
 #define private public
 #define protected public
@@ -32,6 +36,26 @@ limitations under the License.
 namespace xllm {
 
 namespace {
+
+class SuccessfulSessionService final
+    : public proto::MooncakeTransferEngineService {
+ public:
+  void OpenSession(google::protobuf::RpcController*,
+                   const proto::SessionInfo*,
+                   proto::Status* response,
+                   google::protobuf::Closure* done) override {
+    brpc::ClosureGuard done_guard(done);
+    response->set_ok(true);
+  }
+
+  void CloseSession(google::protobuf::RpcController*,
+                    const proto::SessionInfo*,
+                    proto::Status* response,
+                    google::protobuf::Closure* done) override {
+    brpc::ClosureGuard done_guard(done);
+    response->set_ok(true);
+  }
+};
 
 TransferKVInfo make_info(int32_t dst_dp_size,
                          int32_t dst_tp_size,
@@ -106,6 +130,28 @@ TEST(MooncakeTransferEngineServiceTest, CloseSessionWithoutHandleReturnsTrue) {
   service.CloseSession(&cntl, &request, &response, nullptr);
 
   EXPECT_TRUE(response.ok());
+}
+
+TEST(MooncakeTransferEngineCoreTest, CloseRemoteSessionDoesNotDeadlock) {
+  SuccessfulSessionService service;
+  brpc::Server server;
+  ASSERT_EQ(server.AddService(&service, brpc::SERVER_DOESNT_OWN_SERVICE), 0);
+  ASSERT_EQ(server.Start(0, nullptr), 0);
+
+  const uint16_t port = server.listen_address().port;
+  const uint64_t cluster_id =
+      net::convert_ip_port_to_uint64("127.0.0.1", port);
+  auto result = std::async(std::launch::async, [cluster_id]() {
+    return MooncakeTransferEngineCore::get_instance().close_session(
+        cluster_id, "127.0.0.1:1");
+  });
+
+  EXPECT_EQ(result.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+  EXPECT_TRUE(result.get());
+
+  server.Stop(0);
+  server.Join();
 }
 
 #if defined(USE_MLU)
