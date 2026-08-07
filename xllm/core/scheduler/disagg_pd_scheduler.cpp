@@ -371,10 +371,12 @@ bool DisaggPDScheduler::add_request(std::shared_ptr<Request>& request) {
   if (request->offline()) {
     // offline request, push to offline queue
     prefill_request_queue_offline_.enqueue(request);
+    request->profile().mark_enqueued();
     return true;
   }
   // push and wait
   prefill_request_queue_.enqueue(request);
+  request->profile().mark_enqueued();
 
   return true;
 }
@@ -946,6 +948,7 @@ bool DisaggPDScheduler::decode_recv_first_generation(
     kv_cache_manager_->deallocate(request.get());
     return false;
   }
+  request->profile().mark_enqueued();
   if (pd_transfer_telemetry_enabled()) {
     PDTransferTelemetryEvent telemetry_event;
     telemetry_event.request_id = req_id;
