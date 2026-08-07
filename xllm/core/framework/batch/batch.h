@@ -75,6 +75,10 @@ class Batch {
 
   uint64_t batch_id() const { return batch_id_; }
 
+  const BatchForwardType& batch_forward_type() const {
+    return batch_forward_type_;
+  }
+
   // get the number of sequences in the batch
   size_t size() const { return sequences_.size(); }
   bool empty() const { return sequences_.empty() && sequence_groups_.empty(); }
