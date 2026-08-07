@@ -22,6 +22,7 @@ limitations under the License.
 #include <numeric>
 
 #include "common/pd_transfer_telemetry.h"
+#include "framework/config/service_config.h"
 #include "util/net.h"
 
 namespace xllm {
@@ -43,22 +44,44 @@ bool fail_transfer_trace(MooncakeTransferTrace* trace,
   return false;
 }
 
-bool close_remote_session(MooncakeTransferEngineCore* core,
-                          uint64_t cluster_id) {
-  proto::MooncakeTransferEngineService_Stub* stub =
-      core->get_or_create_stub(cluster_id);
-  if (stub == nullptr) {
-    LOG(ERROR) << "create_rpc_channel failed for cluster_id=" << cluster_id;
-    return false;
-  }
+constexpr int kDefaultSessionRpcTimeoutMs = 1000;
 
+int session_rpc_timeout_ms() {
+  const int configured_timeout_ms =
+      ServiceConfig::get_instance().rpc_channel_timeout_ms();
+  return configured_timeout_ms > 0 ? configured_timeout_ms
+                                   : kDefaultSessionRpcTimeoutMs;
+}
+
+bool open_remote_session(proto::MooncakeTransferEngineService_Stub* stub,
+                         const std::string& local_addr,
+                         const std::string& remote_addr) {
   proto::SessionInfo session_info;
-  session_info.set_addr(core->addr());
+  session_info.set_addr(local_addr);
   proto::Status response;
   brpc::Controller cntl;
+  cntl.set_timeout_ms(session_rpc_timeout_ms());
+  stub->OpenSession(&cntl, &session_info, &response, nullptr);
+  if (cntl.Failed() || !response.ok()) {
+    LOG(ERROR) << "OpenSession failed for " << remote_addr << ", "
+               << cntl.ErrorText();
+    return false;
+  }
+  return true;
+}
+
+bool close_remote_session(proto::MooncakeTransferEngineService_Stub* stub,
+                          const std::string& local_addr,
+                          const std::string& remote_addr) {
+  proto::SessionInfo session_info;
+  session_info.set_addr(local_addr);
+  proto::Status response;
+  brpc::Controller cntl;
+  cntl.set_timeout_ms(session_rpc_timeout_ms());
   stub->CloseSession(&cntl, &session_info, &response, nullptr);
   if (cntl.Failed() || !response.ok()) {
-    LOG(ERROR) << "CloseSession failed, " << cntl.ErrorText();
+    LOG(ERROR) << "CloseSession failed for " << remote_addr << ", "
+               << cntl.ErrorText();
     return false;
   }
   return true;
@@ -161,7 +184,7 @@ bool MooncakeTransferEngineCore::initialize(uint16_t listen_port,
 
 bool MooncakeTransferEngineCore::open_session(const uint64_t cluster_id,
                                               const std::string& remote_addr) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::mutex> lock(mutex_);
 
   LOG(INFO) << "open_session, cluster_id=" << cluster_id
             << ", remote_addr=" << remote_addr;
@@ -183,20 +206,25 @@ bool MooncakeTransferEngineCore::open_session(const uint64_t cluster_id,
       return false;
     }
 
-    proto::SessionInfo request;
-    request.set_addr(addr_);
-    proto::Status response;
-    brpc::Controller cntl;
-    stub->OpenSession(&cntl, &request, &response, nullptr);
-    if (cntl.Failed() || !response.ok()) {
-      LOG(ERROR) << "OpenSession failed, " << cntl.ErrorText();
+    const std::string local_addr = addr_;
+    lock.unlock();
+    if (!open_remote_session(stub, local_addr, remote_addr)) {
       return false;
     }
 
     LOG(INFO) << "OpenSession RPC to " << remote_addr
-              << ", local_addr=" << addr_;
+              << ", local_addr=" << local_addr;
 #if !defined(USE_DCU)
     return true;
+#else
+    lock.lock();
+    it = handles_.find(remote_addr);
+    if (it != handles_.end()) {
+      it->second.ref_count++;
+      LOG(INFO) << "Reusing existing session for " << remote_addr
+                << ", ref_count=" << it->second.ref_count;
+      return true;
+    }
 #endif
   }
 
@@ -218,7 +246,7 @@ bool MooncakeTransferEngineCore::open_session(const uint64_t cluster_id,
 
 bool MooncakeTransferEngineCore::close_session(const uint64_t cluster_id,
                                                const std::string& remote_addr) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::mutex> lock(mutex_);
 
   LOG(INFO) << "close_session, cluster_id=" << cluster_id
             << ", remote_addr=" << remote_addr;
@@ -233,10 +261,20 @@ bool MooncakeTransferEngineCore::close_session(const uint64_t cluster_id,
         return true;
       }
     }
-#if defined(USE_DCU)
-    if (!close_remote_session(this, cluster_id)) {
+    proto::MooncakeTransferEngineService_Stub* stub =
+        get_or_create_stub_locked(cluster_id);
+    if (stub == nullptr) {
+      LOG(ERROR) << "create_rpc_channel failed for cluster_id=" << cluster_id;
       return false;
     }
+    const std::string local_addr = addr_;
+    lock.unlock();
+    if (!close_remote_session(stub, local_addr, remote_addr)) {
+      return false;
+    }
+#if defined(USE_DCU)
+    lock.lock();
+    it = handles_.find(remote_addr);
     if (it != handles_.end()) {
       Transport::SegmentHandle handle = it->second.handle;
       if (handle != static_cast<Transport::SegmentHandle>(-1)) {
@@ -246,7 +284,7 @@ bool MooncakeTransferEngineCore::close_session(const uint64_t cluster_id,
     }
     return true;
 #else
-    return close_remote_session(this, cluster_id);
+    return true;
 #endif
   }
 
