@@ -232,6 +232,8 @@ void DisaggPDServiceImpl::decode_recv_first_generation(
     }
 
     const auto& first_token = gen.tokens(0);
+    scheduler_->trace_pd_event(gen.req_id(),
+                               "first_generation_rpc_server_enter");
     std::vector<int64_t> top_tokens(first_token.top_tokens().begin(),
                                     first_token.top_tokens().end());
     std::vector<float> top_logprobs(first_token.top_logprobs().begin(),
@@ -264,6 +266,9 @@ void DisaggPDServiceImpl::decode_recv_first_generation(
         gen.dp_size(),
         gen.dp_rank(),
         mtp_bootstrap_embedding);
+    scheduler_->trace_pd_event(gen.req_id(),
+                               "first_generation_rpc_server_handler_complete",
+                               success ? "ok" : "failed");
     if (!success) {
       response->set_ok(false);
       return;

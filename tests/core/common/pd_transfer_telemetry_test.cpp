@@ -32,6 +32,11 @@ TEST(PDTransferTelemetryTest, SerializesStableSchemaAndEscapesRequestId) {
   event.attempt_id = 7;
   event.event = "transfer_complete";
   event.monotonic_ns = 123456789;
+  event.instance_name = "127.0.0.1:5001";
+  event.incarnation_id = "inc-7";
+  event.producer = "test-producer";
+  event.clock_domain = "steady_clock";
+  event.host_name = "test-host";
   event.transfer_backend = "LlmDataDist";
   event.transfer_mode = "PUSH";
   event.source_rank = 3;
@@ -50,6 +55,11 @@ TEST(PDTransferTelemetryTest, SerializesStableSchemaAndEscapesRequestId) {
   EXPECT_EQ(data["attempt_id"], 7);
   EXPECT_EQ(data["event"], "transfer_complete");
   EXPECT_EQ(data["monotonic_ns"], 123456789);
+  EXPECT_EQ(data["instance_name"], event.instance_name);
+  EXPECT_EQ(data["incarnation_id"], event.incarnation_id);
+  EXPECT_EQ(data["producer"], event.producer);
+  EXPECT_EQ(data["clock_domain"], event.clock_domain);
+  EXPECT_EQ(data["host_name"], event.host_name);
   EXPECT_EQ(data["transfer_backend"], "LlmDataDist");
   EXPECT_EQ(data["transfer_mode"], "PUSH");
   EXPECT_EQ(data["source_rank"], 3);

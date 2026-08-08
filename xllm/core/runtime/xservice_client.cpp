@@ -27,6 +27,7 @@ limitations under the License.
 #include <utility>
 
 #include "core/common/metrics.h"
+#include "core/common/pd_transfer_telemetry.h"
 #include "core/framework/config/distributed_config.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/service_config.h"
@@ -215,6 +216,8 @@ XServiceClient::~XServiceClient() {
 }
 
 std::string XServiceClient::get_instance_name() { return instance_name_; }
+
+std::string XServiceClient::get_incarnation_id() { return incarnation_id_; }
 
 bool XServiceClient::register_instance_with_retry(const std::string& key,
                                                   const std::string& value) {
@@ -898,6 +901,19 @@ std::vector<bool> XServiceClient::generations(
       continue;
     }
     ctx.issued = true;
+    if (pd_transfer_telemetry_enabled()) {
+      for (const auto output_index : service_outputs_map[ctx.service_addr]) {
+        PDTransferTelemetryEvent event;
+        event.request_id = outputs[output_index].request_id;
+        event.event = "xservice_generations_rpc_start";
+        event.monotonic_ns = pd_transfer_monotonic_time_ns();
+        event.instance_name = instance_name_;
+        event.incarnation_id = incarnation_id_;
+        event.producer = "xservice_client";
+        event.destination_addr = ctx.service_addr;
+        log_pd_transfer_telemetry(std::move(event));
+      }
+    }
     service_stub->Generations(
         &ctx.cntl, &ctx.gens, &ctx.resp, brpc::DoNothing());
   }
@@ -906,6 +922,30 @@ std::vector<bool> XServiceClient::generations(
   for (auto& ctx : contexts) {
     if (ctx.issued) {
       brpc::Join(ctx.cntl.call_id());
+    }
+  }
+
+  if (pd_transfer_telemetry_enabled()) {
+    for (const auto& ctx : contexts) {
+      if (!ctx.issued) {
+        continue;
+      }
+      const auto index_it = service_outputs_map.find(ctx.service_addr);
+      if (index_it == service_outputs_map.end()) {
+        continue;
+      }
+      for (const auto output_index : index_it->second) {
+        PDTransferTelemetryEvent event;
+        event.request_id = outputs[output_index].request_id;
+        event.event = "xservice_generations_rpc_complete";
+        event.monotonic_ns = pd_transfer_monotonic_time_ns();
+        event.instance_name = instance_name_;
+        event.incarnation_id = incarnation_id_;
+        event.producer = "xservice_client";
+        event.destination_addr = ctx.service_addr;
+        event.result = ctx.cntl.Failed() ? "failed" : "ok";
+        log_pd_transfer_telemetry(std::move(event));
+      }
     }
   }
 

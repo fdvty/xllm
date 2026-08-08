@@ -55,6 +55,7 @@ class XServiceClient {
   bool initialize_done() { return initialize_done_; }
 
   std::string get_instance_name();
+  std::string get_incarnation_id();
   void register_instance(const InstanceInfo& instance_info);
   void heartbeat();
   InstanceInfo get_instance_info(const std::string& instance_name);

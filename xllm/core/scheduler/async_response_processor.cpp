@@ -23,14 +23,39 @@ limitations under the License.
 
 #include "common/global_flags.h"
 #include "common/metrics.h"
+#include "common/pd_transfer_telemetry.h"
 #include "core/framework/config/service_config.h"
 #include "framework/request/finish_reason.h"
 #include "framework/request/request.h"
 #include "framework/request/sequence.h"
+#include "runtime/xservice_client.h"
 #include "util/blocking_counter.h"
 #include "util/env_var.h"
 
 namespace xllm {
+namespace {
+
+void trace_response_event(const std::string& request_id,
+                          const std::string& event,
+                          const std::string& result = "") {
+  if (!pd_transfer_telemetry_enabled()) {
+    return;
+  }
+  PDTransferTelemetryEvent telemetry_event;
+  telemetry_event.request_id = request_id;
+  telemetry_event.event = event;
+  telemetry_event.monotonic_ns = pd_transfer_monotonic_time_ns();
+  telemetry_event.producer = "async_response_processor";
+  telemetry_event.result = result;
+  auto* xservice_client = XServiceClient::get_instance();
+  if (xservice_client->initialize_done()) {
+    telemetry_event.instance_name = xservice_client->get_instance_name();
+    telemetry_event.incarnation_id = xservice_client->get_incarnation_id();
+  }
+  log_pd_transfer_telemetry(std::move(telemetry_event));
+}
+
+}  // namespace
 
 AsyncResponseProcessor::AsyncResponseProcessor(
     const Tokenizer* tokenizer,
@@ -95,6 +120,8 @@ void AsyncResponseProcessor::process_completed_request(
   // object must be detached to avoid premature destruction.
   auto runnable = [this, request = request]() mutable {
     AUTO_COUNTER(responsing_latency_seconds_non_stream);
+    trace_response_event(request->request_id(),
+                         "response_generation_worker_start");
 
     double end_2_end_latency_seconds = request->elapsed_seconds();
     // update the metrics for the request
@@ -104,6 +131,8 @@ void AsyncResponseProcessor::process_completed_request(
         request->generate_output(*tokenizer_, &generate_output_threadpool_);
     request->log_statistic(end_2_end_latency_seconds);
     request->state().output_func(req_output);
+    trace_response_event(request->request_id(),
+                         "response_output_callback_complete", "ok");
   };
   if (request->state().response_thread_id < 0) {
     request->state().response_thread_id =
@@ -210,6 +239,8 @@ void AsyncResponseProcessor::process_stream_request(
                      indexes = std::move(indexes),
                      num_tokens = std::move(num_tokens)]() {
       AUTO_COUNTER(responsing_latency_seconds_stream);
+      trace_response_event(request->request_id(),
+                           "response_generation_worker_start");
 
       RequestOutput req_output;
       req_output.request_id = request->request_id();
@@ -226,6 +257,8 @@ void AsyncResponseProcessor::process_stream_request(
         // cancel the request if on_stream returns false
         request->set_cancel();
       }
+      trace_response_event(request->request_id(),
+                           "response_output_callback_complete", "ok");
     };
     if (request->state().response_thread_id < 0) {
       request->state().response_thread_id =

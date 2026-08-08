@@ -29,6 +29,11 @@ struct PDTransferTelemetryEvent {
   uint64_t attempt_id = kLegacyPDAttemptId;
   std::string event;
   int64_t monotonic_ns = 0;
+  std::string instance_name;
+  std::string incarnation_id;
+  std::string producer;
+  std::string clock_domain = "steady_clock";
+  std::string host_name;
   std::string transfer_backend;
   std::string transfer_mode;
   int32_t source_rank = -1;
