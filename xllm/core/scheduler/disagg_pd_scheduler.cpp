@@ -110,8 +110,10 @@ void DisaggPDScheduler::trace_pd_event(const std::string& request_id,
   telemetry_event.request_id = request_id;
   telemetry_event.event = event;
   telemetry_event.monotonic_ns = pd_transfer_monotonic_time_ns();
-  telemetry_event.instance_name = xservice_client_->get_instance_name();
-  telemetry_event.incarnation_id = xservice_client_->get_incarnation_id();
+  if (xservice_client_ != nullptr && xservice_client_->initialize_done()) {
+    telemetry_event.instance_name = xservice_client_->get_instance_name();
+    telemetry_event.incarnation_id = xservice_client_->get_incarnation_id();
+  }
   telemetry_event.producer = "disagg_pd_scheduler";
   telemetry_event.result = result;
   log_pd_transfer_telemetry(std::move(telemetry_event));
