@@ -100,6 +100,23 @@ DisaggPDScheduler::~DisaggPDScheduler() {
   }
 }
 
+void DisaggPDScheduler::trace_pd_event(const std::string& request_id,
+                                       const std::string& event,
+                                       const std::string& result) {
+  if (!pd_transfer_telemetry_enabled()) {
+    return;
+  }
+  PDTransferTelemetryEvent telemetry_event;
+  telemetry_event.request_id = request_id;
+  telemetry_event.event = event;
+  telemetry_event.monotonic_ns = pd_transfer_monotonic_time_ns();
+  telemetry_event.instance_name = xservice_client_->get_instance_name();
+  telemetry_event.incarnation_id = xservice_client_->get_incarnation_id();
+  telemetry_event.producer = "disagg_pd_scheduler";
+  telemetry_event.result = result;
+  log_pd_transfer_telemetry(std::move(telemetry_event));
+}
+
 void DisaggPDScheduler::stop_request_admission() {
   std::lock_guard<std::mutex> lock(lifecycle_mutex_);
   if (stopping_) {
@@ -339,6 +356,7 @@ std::vector<Batch> DisaggPDScheduler::prepare_batch() {
         }
       } else {
         // request from prefill instance in disagge pd mode.
+        trace_pd_event(request->request_id(), "decode_request_queue_pop");
         running_requests_.emplace_back(request);
       }
     }
@@ -646,6 +664,7 @@ void DisaggPDScheduler::prefill_send_first_generation() {
     auto request = running_requests_[i];
     // Check if the request is a recently completed prefill request
     if (request->sequences()[0]->num_generated_tokens() == 1) {
+      trace_pd_event(request->request_id(), "prefill_first_token_ready");
       request->log_statistic(request->elapsed_seconds());
       requests.emplace_back(request);
       if (!request->state().stream) {
@@ -679,8 +698,10 @@ void DisaggPDScheduler::prefill_send_first_generation() {
       kv_cache_manager_->deallocate(request.get());
     };
     for (auto& request : requests) {
+      trace_pd_event(request->request_id(), "first_generation_worker_start");
       // TODO: support batch request later
       proto::DisaggGenerationsRequests gens;
+      trace_pd_event(request->request_id(), "first_generation_event_create");
       auto gen = gens.mutable_multi_gens()->Add();
       gen->set_req_id(request->request_id());
       gen->set_x_request_id(request->x_request_id());
@@ -763,9 +784,13 @@ void DisaggPDScheduler::prefill_send_first_generation() {
       // TODO: Async call later
       proto::Status resp;
       brpc::Controller cntl;
+      trace_pd_event(request->request_id(), "first_generation_rpc_start");
       stub->FirstGeneration(&cntl, &gens, &resp, nullptr);
 
       const bool sent_first_generation = !cntl.Failed() && resp.ok();
+      trace_pd_event(request->request_id(),
+                     "first_generation_rpc_complete",
+                     sent_first_generation ? "ok" : "failed");
       if (!sent_first_generation) {
         LOG(ERROR) << "Failed to send first generation to decode instance : "
                    << request->state().decode_address
@@ -827,6 +852,7 @@ bool DisaggPDScheduler::decode_recv_first_generation(
     int32_t src_dp_size,
     int32_t src_dp_rank,
     torch::Tensor mtp_bootstrap_embedding) {
+  trace_pd_event(req_id, "decode_first_generation_handler_enter");
   // push to request_queue_, and will be executed by engine.
   std::shared_ptr<Request> request = nullptr;
   {
@@ -913,6 +939,7 @@ bool DisaggPDScheduler::decode_recv_first_generation(
 
   // pull kv cache
   if (kv_cache_transfer_mode == "PULL") {
+    trace_pd_event(req_id, "decode_kv_pull_start");
     const auto blocks = sequence->kv_state().kv_blocks();
     std::vector<uint64_t> dst_block_ids;
     dst_block_ids.reserve(blocks.size());
@@ -937,17 +964,22 @@ bool DisaggPDScheduler::decode_recv_first_generation(
                                                 src_linear_state_ids,
                                                 dst_linear_state_ids);
     if (!pulled) {
+      trace_pd_event(req_id, "decode_kv_pull_complete", "failed");
       LOG(ERROR) << "Failed to pull KV blocks, request_id: " << req_id;
       kv_cache_manager_->deallocate(request.get());
       return false;
     }
+    trace_pd_event(req_id, "decode_kv_pull_complete", "ok");
   }
 
+  trace_pd_event(req_id, "decode_request_queue_push_start");
   if (!request_queue_.write(request)) {
+    trace_pd_event(req_id, "decode_request_queue_push_complete", "failed");
     LOG(ERROR) << "Failed to enqueue decode request, request_id: " << req_id;
     kv_cache_manager_->deallocate(request.get());
     return false;
   }
+  trace_pd_event(req_id, "decode_request_queue_push_complete", "ok");
   request->profile().mark_enqueued();
   if (pd_transfer_telemetry_enabled()) {
     PDTransferTelemetryEvent telemetry_event;
@@ -1020,6 +1052,9 @@ bool DisaggPDScheduler::link_instance(const std::string& instance_name,
   }
   LOG(INFO) << "Successfully linked instance, instance_name: " << instance_name
             << ", prefill_kv_split_size: " << src_kv_split_size;
+  trace_pd_event("session:" + instance_name,
+                 "pd_session_link_complete",
+                 "ok");
   linked_instance_.emplace(instance_name);
   return true;
 }
@@ -1052,6 +1087,9 @@ bool DisaggPDScheduler::unlink_instance(
   }
   LOG(INFO) << "Successfully unlinked instance, instance_name: "
             << instance_name;
+  trace_pd_event("session:" + instance_name,
+                 "pd_session_unlink_complete",
+                 "ok");
   linked_instance_.erase(instance_name);
   return true;
 }

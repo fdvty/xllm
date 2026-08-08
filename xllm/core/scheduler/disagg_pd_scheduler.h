@@ -81,6 +81,10 @@ class DisaggPDScheduler : public ChunkedPrefillScheduler {
 
   bool enable_schedule_overlap() { return options_.enable_schedule_overlap(); };
 
+  void trace_pd_event(const std::string& request_id,
+                      const std::string& event,
+                      const std::string& result = "");
+
   void get_latency_metrics(std::vector<int64_t>& ttft,
                            std::vector<int64_t>& tbt);
 

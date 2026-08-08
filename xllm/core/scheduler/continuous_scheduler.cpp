@@ -32,6 +32,7 @@ limitations under the License.
 
 #include "common/global_flags.h"
 #include "common/metrics.h"
+#include "common/pd_transfer_telemetry.h"
 #include "core/framework/config/kv_cache_config.h"
 #include "core/framework/config/parallel_config.h"
 #include "core/framework/config/rec_config.h"
@@ -246,7 +247,7 @@ void ContinuousScheduler::record_engine_step_profile(
     const std::vector<Batch>& batches,
     const std::vector<std::shared_ptr<Request>>& requests,
     int64_t duration_ns) {
-  if (!RequestProfile::globally_enabled()) {
+  if (!RequestProfile::globally_enabled() && !pd_transfer_telemetry_enabled()) {
     return;
   }
   const BatchProfileSummary summary = summarize_batch_profile(batches);
@@ -255,7 +256,23 @@ void ContinuousScheduler::record_engine_step_profile(
   }
   for (const auto& request : requests) {
     if (request != nullptr) {
-      request->profile().mark_engine_step(duration_ns, summary.type);
+      if (RequestProfile::globally_enabled()) {
+        request->profile().mark_engine_step(duration_ns, summary.type);
+      }
+      if (pd_transfer_telemetry_enabled()) {
+        PDTransferTelemetryEvent event;
+        event.request_id = request->request_id();
+        event.event = "engine_step_complete";
+        event.monotonic_ns = pd_transfer_monotonic_time_ns();
+        event.producer = "continuous_scheduler";
+        event.result = summary.type;
+        if (xservice_client_ != nullptr &&
+            xservice_client_->initialize_done()) {
+          event.instance_name = xservice_client_->get_instance_name();
+          event.incarnation_id = xservice_client_->get_incarnation_id();
+        }
+        log_pd_transfer_telemetry(std::move(event));
+      }
     }
   }
 }

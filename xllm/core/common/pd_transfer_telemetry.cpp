@@ -25,6 +25,7 @@ limitations under the License.
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "common/metrics.h"
@@ -222,6 +223,18 @@ std::string serialize_pd_transfer_telemetry(
   data["attempt_id"] = event.attempt_id;
   data["event"] = event.event;
   data["monotonic_ns"] = event.monotonic_ns;
+  data["instance_name"] = event.instance_name;
+  data["incarnation_id"] = event.incarnation_id;
+  data["producer"] = event.producer;
+  data["clock_domain"] = event.clock_domain;
+  if (!event.host_name.empty()) {
+    data["host_name"] = event.host_name;
+  } else {
+    char hostname[256] = {};
+    if (::gethostname(hostname, sizeof(hostname) - 1) == 0) {
+      data["host_name"] = hostname;
+    }
+  }
   data["transfer_backend"] = event.transfer_backend;
   data["transfer_mode"] = event.transfer_mode;
   data["source_rank"] = event.source_rank;
