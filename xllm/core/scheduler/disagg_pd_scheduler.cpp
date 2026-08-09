@@ -358,7 +358,6 @@ std::vector<Batch> DisaggPDScheduler::prepare_batch() {
         }
       } else {
         // request from prefill instance in disagge pd mode.
-        trace_pd_event(request->request_id(), "decode_request_queue_pop");
         running_requests_.emplace_back(request);
       }
     }

@@ -120,6 +120,26 @@ BatchProfileSummary summarize_batch_profile(const std::vector<Batch>& batches) {
   return summary;
 }
 
+void trace_scheduler_event(const std::string& request_id,
+                           const std::string& event,
+                           XServiceClient* xservice_client,
+                           const std::string& result = "") {
+  if (!pd_transfer_telemetry_enabled()) {
+    return;
+  }
+  PDTransferTelemetryEvent telemetry_event;
+  telemetry_event.request_id = request_id;
+  telemetry_event.event = event;
+  telemetry_event.monotonic_ns = pd_transfer_monotonic_time_ns();
+  telemetry_event.producer = "continuous_scheduler";
+  telemetry_event.result = result;
+  if (xservice_client != nullptr && xservice_client->initialize_done()) {
+    telemetry_event.instance_name = xservice_client->get_instance_name();
+    telemetry_event.incarnation_id = xservice_client->get_incarnation_id();
+  }
+  log_pd_transfer_telemetry(std::move(telemetry_event));
+}
+
 }  // namespace
 
 namespace {
@@ -259,20 +279,10 @@ void ContinuousScheduler::record_engine_step_profile(
       if (RequestProfile::globally_enabled()) {
         request->profile().mark_engine_step(duration_ns, summary.type);
       }
-      if (pd_transfer_telemetry_enabled()) {
-        PDTransferTelemetryEvent event;
-        event.request_id = request->request_id();
-        event.event = "engine_step_complete";
-        event.monotonic_ns = pd_transfer_monotonic_time_ns();
-        event.producer = "continuous_scheduler";
-        event.result = summary.type;
-        if (xservice_client_ != nullptr &&
-            xservice_client_->initialize_done()) {
-          event.instance_name = xservice_client_->get_instance_name();
-          event.incarnation_id = xservice_client_->get_incarnation_id();
-        }
-        log_pd_transfer_telemetry(std::move(event));
-      }
+      trace_scheduler_event(request->request_id(),
+                            "engine_step_complete",
+                            xservice_client_,
+                            summary.type);
     }
   }
 }
@@ -1080,6 +1090,9 @@ std::vector<Batch> ContinuousScheduler::prepare_batch() {
       }
     } else {
       // request from prefill instance in disagge pd mode.
+      trace_scheduler_event(request->request_id(),
+                            "decode_request_queue_pop",
+                            xservice_client_);
       running_requests_.emplace_back(request);
     }
   }
