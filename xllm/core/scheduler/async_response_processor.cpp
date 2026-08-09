@@ -19,6 +19,7 @@ limitations under the License.
 #include <absl/time/clock.h>
 #include <glog/logging.h>
 
+#include <limits>
 #include <memory>
 
 #include "common/global_flags.h"
@@ -28,6 +29,7 @@ limitations under the License.
 #include "framework/request/finish_reason.h"
 #include "framework/request/request.h"
 #include "framework/request/sequence.h"
+#include "framework/tokenizer/tokenizer.h"
 #include "runtime/xservice_client.h"
 #include "util/blocking_counter.h"
 #include "util/env_var.h"
@@ -55,6 +57,29 @@ void trace_response_event(const std::string& request_id,
   log_pd_transfer_telemetry(std::move(telemetry_event));
 }
 
+void warm_up_tokenizer_on_each_thread(ThreadPool& threadpool,
+                                      const Tokenizer& tokenizer) {
+  const size_t thread_count = threadpool.size();
+  CHECK_GT(thread_count, 0);
+  CHECK_LE(thread_count,
+           static_cast<size_t>(std::numeric_limits<int32_t>::max()));
+
+  const absl::Time start_time = absl::Now();
+  BlockingCounter counter(static_cast<int32_t>(thread_count));
+  for (size_t thread_id = 0; thread_id < thread_count; ++thread_id) {
+    threadpool.schedule_with_tid(
+        [&counter, &tokenizer]() {
+          static_cast<void>(tokenizer.vocab_size());
+          counter.decrement_count();
+        },
+        thread_id);
+  }
+  counter.wait();
+  LOG(INFO) << "Pre-warmed response tokenizer on " << thread_count
+            << " threads in "
+            << absl::ToDoubleMilliseconds(absl::Now() - start_time) << " ms";
+}
+
 }  // namespace
 
 AsyncResponseProcessor::AsyncResponseProcessor(
@@ -75,7 +100,9 @@ AsyncResponseProcessor::AsyncResponseProcessor(
           /*pool_name=*/"AsyncResponseProcessor.generate_output"),
       tokenizer_(tokenizer->clone()),
       role_(role.value_or(InstanceRole::DEFAULT)),
-      enable_batch_response_(enable_service_routing) {}
+      enable_batch_response_(enable_service_routing) {
+  warm_up_tokenizer_on_each_thread(response_threadpool_, *tokenizer_);
+}
 
 void AsyncResponseProcessor::process_failed_request(
     std::shared_ptr<Request> request,
@@ -338,8 +365,12 @@ void AsyncResponseProcessor::batch_process_stream_requests(
           }
         }
       }
+      trace_response_event(request->request_id(),
+                           "response_generation_worker_complete");
       counter->decrement_count();
     };
+    trace_response_event(request->request_id(),
+                         "response_generation_worker_submit");
     if (request->state().response_thread_id < 0) {
       request->state().response_thread_id =
           response_threadpool_.schedule(runnable);
@@ -349,12 +380,24 @@ void AsyncResponseProcessor::batch_process_stream_requests(
     }
   }
 
+  for (const auto& request : requests) {
+    trace_response_event(request->request_id(), "response_rpc_worker_submit");
+  }
   rpc_threadpool_.schedule(
       [counter = std::unique_ptr<BlockingCounter>(counter),
        requests = std::move(requests),
        request_outputs = std::move(request_outputs)]() mutable {
+        for (const auto& request : requests) {
+          trace_response_event(request->request_id(),
+                               "response_rpc_worker_start");
+        }
         auto& resp_callback = requests[0]->state().outputs_func;
         counter->wait();
+        for (const auto& request : requests) {
+          trace_response_event(request->request_id(), "response_batch_ready");
+          trace_response_event(request->request_id(),
+                               "response_batch_callback_start");
+        }
         std::vector<bool> status_set = resp_callback(request_outputs);
         for (size_t i = 0; i < requests.size(); ++i) {
           if (!status_set[i]) {
