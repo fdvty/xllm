@@ -156,6 +156,8 @@ void AsyncResponseProcessor::batch_process_completed_requests(
                      request = request,
                      request_output = &request_outputs[i]]() mutable {
       AUTO_COUNTER(responsing_latency_seconds_non_stream);
+      trace_response_event(request->request_id(),
+                           "response_generation_worker_start");
       double end_2_end_latency_seconds = request->elapsed_seconds();
       // update the metrics for the request
       HISTOGRAM_OBSERVE(
@@ -188,6 +190,10 @@ void AsyncResponseProcessor::batch_process_completed_requests(
         counter->wait();
         auto& resp_callback = requests[0]->state().outputs_func;
         resp_callback(request_outputs);
+        for (const auto& request : requests) {
+          trace_response_event(request->request_id(),
+                               "response_output_callback_complete", "ok");
+        }
       });
 }
 
@@ -309,6 +315,8 @@ void AsyncResponseProcessor::batch_process_stream_requests(
                      num_tokens = std::move(num_tokens),
                      req_output = &request_outputs[i]]() mutable {
       AUTO_COUNTER(responsing_latency_seconds_stream);
+      trace_response_event(request->request_id(),
+                           "response_generation_worker_start");
 
       // RequestOutput req_output;
       req_output->request_id = request->request_id();
@@ -353,6 +361,9 @@ void AsyncResponseProcessor::batch_process_stream_requests(
             // cancel the request if on_stream returns false
             requests[i]->set_cancel();
           }
+          trace_response_event(requests[i]->request_id(),
+                               "response_output_callback_complete",
+                               status_set[i] ? "ok" : "failed");
         }
       });
 }
