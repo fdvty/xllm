@@ -189,10 +189,10 @@ bool MooncakeTransferEngineCore::open_session(const uint64_t cluster_id,
   LOG(INFO) << "open_session, cluster_id=" << cluster_id
             << ", remote_addr=" << remote_addr;
 
-  session_rpc_cv_.wait(lock, [this, &remote_addr]() {
-    return !session_rpc_inflight_.contains(remote_addr);
-  });
   if (cluster_id != 0) {
+    session_rpc_cv_.wait(lock, [this, &remote_addr]() {
+      return !session_rpc_inflight_.contains(remote_addr);
+    });
     session_rpc_inflight_.insert(remote_addr);
 
     const bool result = [this, cluster_id, &remote_addr, &lock]() {
@@ -287,10 +287,10 @@ bool MooncakeTransferEngineCore::close_session(const uint64_t cluster_id,
   LOG(INFO) << "close_session, cluster_id=" << cluster_id
             << ", remote_addr=" << remote_addr;
 
-  session_rpc_cv_.wait(lock, [this, &remote_addr]() {
-    return !session_rpc_inflight_.contains(remote_addr);
-  });
   if (cluster_id != 0) {
+    session_rpc_cv_.wait(lock, [this, &remote_addr]() {
+      return !session_rpc_inflight_.contains(remote_addr);
+    });
     session_rpc_inflight_.insert(remote_addr);
 
     const bool result = [this, cluster_id, &remote_addr, &lock]() {
