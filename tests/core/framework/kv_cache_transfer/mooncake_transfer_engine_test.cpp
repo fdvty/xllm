@@ -267,6 +267,42 @@ TEST(MooncakeTransferEngineCoreTest, OpenWaitsForCloseOfSameRemoteSession) {
 }
 #endif
 
+TEST(MooncakeTransferEngineCoreTest,
+     LocalCloseWaitsForRemoteCloseOfSameSession) {
+  std::promise<void> close_release;
+  BlockingCloseSessionService service(close_release.get_future().share());
+  std::future<void> close_started = service.get_close_started_future();
+  brpc::Server server;
+  ASSERT_EQ(server.AddService(&service, brpc::SERVER_DOESNT_OWN_SERVICE), 0);
+  ASSERT_EQ(server.Start(0, nullptr), 0);
+
+  const uint16_t port = server.listen_address().port;
+  const uint64_t cluster_id = net::convert_ip_port_to_uint64("127.0.0.1", port);
+  const std::string remote_addr = "127.0.0.1:3";
+  auto remote_close_result =
+      std::async(std::launch::async, [cluster_id, remote_addr]() {
+        return MooncakeTransferEngineCore::get_instance().close_session(
+            cluster_id, remote_addr);
+      });
+  ASSERT_EQ(close_started.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+
+  auto local_close_result =
+      std::async(std::launch::async, [remote_addr]() {
+        return MooncakeTransferEngineCore::get_instance().close_session(
+            0, remote_addr);
+      });
+  EXPECT_EQ(local_close_result.wait_for(std::chrono::milliseconds(200)),
+            std::future_status::timeout);
+
+  close_release.set_value();
+  EXPECT_TRUE(remote_close_result.get());
+  EXPECT_TRUE(local_close_result.get());
+
+  server.Stop(0);
+  server.Join();
+}
+
 #if defined(USE_MLU)
 TEST(MooncakeKVCacheTransferDefaultTest, OwnerRankMergesSingleDst) {
   MooncakeKVCacheTransferDefault transfer(
