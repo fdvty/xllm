@@ -268,7 +268,7 @@ TEST(MooncakeTransferEngineCoreTest, OpenWaitsForCloseOfSameRemoteSession) {
 #endif
 
 TEST(MooncakeTransferEngineCoreTest,
-     LocalCloseWaitsForRemoteCloseOfSameSession) {
+     LocalCloseDoesNotWaitForRemoteCloseOfSameAddress) {
   std::promise<void> close_release;
   BlockingCloseSessionService service(close_release.get_future().share());
   std::future<void> close_started = service.get_close_started_future();
@@ -291,12 +291,12 @@ TEST(MooncakeTransferEngineCoreTest,
     return MooncakeTransferEngineCore::get_instance().close_session(
         0, remote_addr);
   });
-  EXPECT_EQ(local_close_result.wait_for(std::chrono::milliseconds(200)),
-            std::future_status::timeout);
+  EXPECT_EQ(local_close_result.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+  EXPECT_TRUE(local_close_result.get());
 
   close_release.set_value();
   EXPECT_TRUE(remote_close_result.get());
-  EXPECT_TRUE(local_close_result.get());
 
   server.Stop(0);
   server.Join();
