@@ -287,11 +287,10 @@ TEST(MooncakeTransferEngineCoreTest,
   ASSERT_EQ(close_started.wait_for(std::chrono::seconds(2)),
             std::future_status::ready);
 
-  auto local_close_result =
-      std::async(std::launch::async, [remote_addr]() {
-        return MooncakeTransferEngineCore::get_instance().close_session(
-            0, remote_addr);
-      });
+  auto local_close_result = std::async(std::launch::async, [remote_addr]() {
+    return MooncakeTransferEngineCore::get_instance().close_session(
+        0, remote_addr);
+  });
   EXPECT_EQ(local_close_result.wait_for(std::chrono::milliseconds(200)),
             std::future_status::timeout);
 
