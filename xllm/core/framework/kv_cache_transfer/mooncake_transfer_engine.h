@@ -19,11 +19,13 @@ limitations under the License.
 #include <brpc/channel.h>
 #include <brpc/server.h>
 
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "mooncake_transfer_engine.pb.h"
@@ -98,10 +100,14 @@ class MooncakeTransferEngineCore {
   struct SessionInfo {
     SegmentHandle handle = static_cast<SegmentHandle>(-1);
     int32_t ref_count = 0;
+    uint64_t generation = 0;
   };
   std::unordered_map<std::string, SessionInfo> handles_;
+  uint64_t next_session_generation_ = 1;
   std::unordered_map<uint64_t, proto::MooncakeTransferEngineService_Stub*>
       stub_map_;
+  std::condition_variable session_rpc_cv_;
+  std::unordered_set<std::string> session_rpc_inflight_;
 };
 
 class MooncakeTransferEngine final {

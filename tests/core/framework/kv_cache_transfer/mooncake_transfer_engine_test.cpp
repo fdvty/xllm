@@ -22,6 +22,7 @@ limitations under the License.
 #include <chrono>
 #include <future>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "framework/kv_cache_transfer/kv_cache_transfer.h"
@@ -55,6 +56,45 @@ class SuccessfulSessionService final
     brpc::ClosureGuard done_guard(done);
     response->set_ok(true);
   }
+};
+
+class BlockingCloseSessionService final
+    : public proto::MooncakeTransferEngineService {
+ public:
+  explicit BlockingCloseSessionService(std::shared_future<void> close_release)
+      : close_release_(std::move(close_release)) {}
+
+  void OpenSession(google::protobuf::RpcController*,
+                   const proto::SessionInfo*,
+                   proto::Status* response,
+                   google::protobuf::Closure* done) override {
+    brpc::ClosureGuard done_guard(done);
+    open_started_.set_value();
+    response->set_ok(true);
+  }
+
+  void CloseSession(google::protobuf::RpcController*,
+                    const proto::SessionInfo*,
+                    proto::Status* response,
+                    google::protobuf::Closure* done) override {
+    brpc::ClosureGuard done_guard(done);
+    close_started_.set_value();
+    close_release_.wait();
+    response->set_ok(true);
+  }
+
+  std::future<void> get_open_started_future() {
+    return open_started_.get_future();
+  }
+
+  std::future<void> get_close_started_future() {
+    return close_started_.get_future();
+  }
+
+ private:
+  std::promise<void> open_started_;
+  std::promise<void> close_started_;
+  std::shared_future<void> close_release_;
 };
 
 TransferKVInfo make_info(int32_t dst_dp_size,
@@ -173,8 +213,7 @@ TEST(MooncakeTransferEngineCoreTest, CloseRemoteSessionDoesNotDeadlock) {
   ASSERT_EQ(server.Start(0, nullptr), 0);
 
   const uint16_t port = server.listen_address().port;
-  const uint64_t cluster_id =
-      net::convert_ip_port_to_uint64("127.0.0.1", port);
+  const uint64_t cluster_id = net::convert_ip_port_to_uint64("127.0.0.1", port);
   auto result = std::async(std::launch::async, [cluster_id]() {
     return MooncakeTransferEngineCore::get_instance().close_session(
         cluster_id, "127.0.0.1:1");
@@ -187,6 +226,46 @@ TEST(MooncakeTransferEngineCoreTest, CloseRemoteSessionDoesNotDeadlock) {
   server.Stop(0);
   server.Join();
 }
+
+#if !defined(USE_DCU)
+TEST(MooncakeTransferEngineCoreTest, OpenWaitsForCloseOfSameRemoteSession) {
+  std::promise<void> close_release;
+  BlockingCloseSessionService service(close_release.get_future().share());
+  std::future<void> close_started = service.get_close_started_future();
+  std::future<void> open_started = service.get_open_started_future();
+  brpc::Server server;
+  ASSERT_EQ(server.AddService(&service, brpc::SERVER_DOESNT_OWN_SERVICE), 0);
+  ASSERT_EQ(server.Start(0, nullptr), 0);
+
+  const uint16_t port = server.listen_address().port;
+  const uint64_t cluster_id = net::convert_ip_port_to_uint64("127.0.0.1", port);
+  const std::string remote_addr = "127.0.0.1:2";
+  auto close_result =
+      std::async(std::launch::async, [cluster_id, remote_addr]() {
+        return MooncakeTransferEngineCore::get_instance().close_session(
+            cluster_id, remote_addr);
+      });
+  ASSERT_EQ(close_started.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+
+  auto open_result =
+      std::async(std::launch::async, [cluster_id, remote_addr]() {
+        return MooncakeTransferEngineCore::get_instance().open_session(
+            cluster_id, remote_addr);
+      });
+  EXPECT_EQ(open_started.wait_for(std::chrono::milliseconds(200)),
+            std::future_status::timeout);
+
+  close_release.set_value();
+  EXPECT_TRUE(close_result.get());
+  EXPECT_EQ(open_started.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+  EXPECT_TRUE(open_result.get());
+
+  server.Stop(0);
+  server.Join();
+}
+#endif
 
 #if defined(USE_MLU)
 TEST(MooncakeKVCacheTransferDefaultTest, OwnerRankMergesSingleDst) {

@@ -189,6 +189,71 @@ bool MooncakeTransferEngineCore::open_session(const uint64_t cluster_id,
   LOG(INFO) << "open_session, cluster_id=" << cluster_id
             << ", remote_addr=" << remote_addr;
 
+  if (cluster_id != 0) {
+    session_rpc_cv_.wait(lock, [this, &remote_addr]() {
+      return !session_rpc_inflight_.contains(remote_addr);
+    });
+    session_rpc_inflight_.insert(remote_addr);
+
+    const bool result = [this, cluster_id, &remote_addr, &lock]() {
+      auto it = handles_.find(remote_addr);
+      if (it != handles_.end()) {
+        it->second.ref_count++;
+        LOG(INFO) << "Reusing existing session for " << remote_addr
+                  << ", ref_count=" << it->second.ref_count;
+        return true;
+      }
+
+      proto::MooncakeTransferEngineService_Stub* stub =
+          get_or_create_stub_locked(cluster_id);
+      if (stub == nullptr) {
+        LOG(ERROR) << "create_rpc_channel failed";
+        return false;
+      }
+
+      const std::string local_addr = addr_;
+      lock.unlock();
+      const bool opened = open_remote_session(stub, local_addr, remote_addr);
+      lock.lock();
+      if (!opened) {
+        return false;
+      }
+
+      LOG(INFO) << "OpenSession RPC to " << remote_addr
+                << ", local_addr=" << local_addr;
+#if !defined(USE_DCU)
+      return true;
+#else
+      it = handles_.find(remote_addr);
+      if (it != handles_.end()) {
+        it->second.ref_count++;
+        LOG(INFO) << "Reusing existing session for " << remote_addr
+                  << ", ref_count=" << it->second.ref_count;
+        return true;
+      }
+
+      Transport::SegmentHandle handle = engine_->openSegment(remote_addr);
+      if (handle == static_cast<Transport::SegmentHandle>(-1)) {
+        LOG(ERROR) << "Fail to connect to " << remote_addr;
+        return false;
+      }
+
+      SessionInfo session_info;
+      session_info.handle = handle;
+      session_info.ref_count = 1;
+      session_info.generation = next_session_generation_++;
+      handles_[remote_addr] = session_info;
+      LOG(INFO) << "Created new session for " << remote_addr << ", ref_count=1";
+      return true;
+#endif
+    }();
+
+    session_rpc_inflight_.erase(remote_addr);
+    lock.unlock();
+    session_rpc_cv_.notify_all();
+    return result;
+  }
+
   auto it = handles_.find(remote_addr);
   if (it != handles_.end()) {
     // Reuse the existing session until the last caller releases it.
@@ -196,36 +261,6 @@ bool MooncakeTransferEngineCore::open_session(const uint64_t cluster_id,
     LOG(INFO) << "Reusing existing session for " << remote_addr
               << ", ref_count=" << it->second.ref_count;
     return true;
-  }
-
-  if (cluster_id != 0) {
-    proto::MooncakeTransferEngineService_Stub* stub =
-        get_or_create_stub_locked(cluster_id);
-    if (stub == nullptr) {
-      LOG(ERROR) << "create_rpc_channel failed";
-      return false;
-    }
-
-    const std::string local_addr = addr_;
-    lock.unlock();
-    if (!open_remote_session(stub, local_addr, remote_addr)) {
-      return false;
-    }
-
-    LOG(INFO) << "OpenSession RPC to " << remote_addr
-              << ", local_addr=" << local_addr;
-#if !defined(USE_DCU)
-    return true;
-#else
-    lock.lock();
-    it = handles_.find(remote_addr);
-    if (it != handles_.end()) {
-      it->second.ref_count++;
-      LOG(INFO) << "Reusing existing session for " << remote_addr
-                << ", ref_count=" << it->second.ref_count;
-      return true;
-    }
-#endif
   }
 
   Transport::SegmentHandle handle = engine_->openSegment(remote_addr);
@@ -237,6 +272,7 @@ bool MooncakeTransferEngineCore::open_session(const uint64_t cluster_id,
   SessionInfo session_info;
   session_info.handle = handle;
   session_info.ref_count = 1;
+  session_info.generation = next_session_generation_++;
   handles_[remote_addr] = session_info;
 
   LOG(INFO) << "Created new session for " << remote_addr << ", ref_count=1";
@@ -251,43 +287,70 @@ bool MooncakeTransferEngineCore::close_session(const uint64_t cluster_id,
   LOG(INFO) << "close_session, cluster_id=" << cluster_id
             << ", remote_addr=" << remote_addr;
 
-  auto it = handles_.find(remote_addr);
   if (cluster_id != 0) {
-    if (it != handles_.end()) {
-      it->second.ref_count--;
-      LOG(INFO) << "Decremented ref_count for " << remote_addr
-                << ", ref_count=" << it->second.ref_count;
-      if (it->second.ref_count > 0) {
-        return true;
+    session_rpc_cv_.wait(lock, [this, &remote_addr]() {
+      return !session_rpc_inflight_.contains(remote_addr);
+    });
+    session_rpc_inflight_.insert(remote_addr);
+
+    const bool result = [this, cluster_id, &remote_addr, &lock]() {
+      auto it = handles_.find(remote_addr);
+      if (it != handles_.end()) {
+        if (it->second.ref_count <= 0) {
+          LOG(ERROR) << "Invalid session ref_count for " << remote_addr << ": "
+                     << it->second.ref_count;
+          return false;
+        }
+        if (it->second.ref_count > 1) {
+          it->second.ref_count--;
+          LOG(INFO) << "Decremented ref_count for " << remote_addr
+                    << ", ref_count=" << it->second.ref_count;
+          return true;
+        }
       }
-    }
-    proto::MooncakeTransferEngineService_Stub* stub =
-        get_or_create_stub_locked(cluster_id);
-    if (stub == nullptr) {
-      LOG(ERROR) << "create_rpc_channel failed for cluster_id=" << cluster_id;
-      return false;
-    }
-    const std::string local_addr = addr_;
-    lock.unlock();
-    if (!close_remote_session(stub, local_addr, remote_addr)) {
-      return false;
-    }
+
+      proto::MooncakeTransferEngineService_Stub* stub =
+          get_or_create_stub_locked(cluster_id);
+      if (stub == nullptr) {
+        LOG(ERROR) << "create_rpc_channel failed for cluster_id=" << cluster_id;
+        return false;
+      }
+
+      Transport::SegmentHandle handle =
+          static_cast<Transport::SegmentHandle>(-1);
+      uint64_t generation = 0;
+      if (it != handles_.end()) {
+        handle = it->second.handle;
+        generation = it->second.generation;
+      }
+
+      const std::string local_addr = addr_;
+      lock.unlock();
+      const bool closed = close_remote_session(stub, local_addr, remote_addr);
+      lock.lock();
 #if defined(USE_DCU)
-    lock.lock();
-    it = handles_.find(remote_addr);
-    if (it != handles_.end()) {
-      Transport::SegmentHandle handle = it->second.handle;
-      if (handle != static_cast<Transport::SegmentHandle>(-1)) {
-        engine_->closeSegment(handle);
+      if (closed && handle != static_cast<Transport::SegmentHandle>(-1)) {
+        it = handles_.find(remote_addr);
+        if (it != handles_.end() && it->second.generation == generation) {
+          if (it->second.ref_count > 1) {
+            it->second.ref_count--;
+          } else {
+            engine_->closeSegment(handle);
+            handles_.erase(it);
+          }
+        }
       }
-      handles_.erase(it);
-    }
-    return true;
-#else
-    return true;
 #endif
+      return closed;
+    }();
+
+    session_rpc_inflight_.erase(remote_addr);
+    lock.unlock();
+    session_rpc_cv_.notify_all();
+    return result;
   }
 
+  auto it = handles_.find(remote_addr);
   if (it == handles_.end()) {
     return true;
   }
