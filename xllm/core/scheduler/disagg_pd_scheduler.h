@@ -109,6 +109,8 @@ class DisaggPDScheduler : public ChunkedPrefillScheduler {
 
   void profile_tpot();
 
+  void warmup_disaggregated_engine();
+
   void cache_prefill_blocks(Request* request);
 
   // check remote instance info, if not exist, get from master service
