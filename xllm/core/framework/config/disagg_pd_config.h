@@ -47,6 +47,9 @@ class DisaggPDConfig final {
     static const OptionCategory kOptionCategory = {
         "DISAGGREGATED PREFILL-DECODE OPTIONS",
         {"enable_disagg_pd",
+         "enable_disagg_pd_startup_warmup",
+         "disagg_pd_startup_warmup_batch_size",
+         "disagg_pd_startup_warmup_context_length",
          "enable_pd_transfer_telemetry",
          "pd_transfer_telemetry_queue_capacity",
          "pd_transfer_telemetry_batch_size",
@@ -61,6 +64,12 @@ class DisaggPDConfig final {
   }
 
   PROPERTY(bool, enable_disagg_pd) = false;
+
+  PROPERTY(bool, enable_disagg_pd_startup_warmup) = false;
+
+  PROPERTY(int32_t, disagg_pd_startup_warmup_batch_size) = 8;
+
+  PROPERTY(int32_t, disagg_pd_startup_warmup_context_length) = 64;
 
   PROPERTY(bool, enable_pd_transfer_telemetry) = false;
 

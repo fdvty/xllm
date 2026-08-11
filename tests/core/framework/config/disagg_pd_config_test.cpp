@@ -79,6 +79,28 @@ TEST(DisaggPDConfigTest, ExposesTransferTelemetryWithDisabledDefault) {
             option_names.end());
 }
 
+TEST(DisaggPDConfigTest, ExposesStartupWarmupWithDisabledDefault) {
+  const DisaggPDConfig config;
+  const std::vector<std::string>& option_names =
+      DisaggPDConfig::option_category().option_names;
+
+  EXPECT_FALSE(config.enable_disagg_pd_startup_warmup());
+  EXPECT_EQ(config.disagg_pd_startup_warmup_batch_size(), 8);
+  EXPECT_EQ(config.disagg_pd_startup_warmup_context_length(), 64);
+  EXPECT_NE(std::find(option_names.begin(),
+                      option_names.end(),
+                      "enable_disagg_pd_startup_warmup"),
+            option_names.end());
+  EXPECT_NE(std::find(option_names.begin(),
+                      option_names.end(),
+                      "disagg_pd_startup_warmup_batch_size"),
+            option_names.end());
+  EXPECT_NE(std::find(option_names.begin(),
+                      option_names.end(),
+                      "disagg_pd_startup_warmup_context_length"),
+            option_names.end());
+}
+
 TEST(DisaggPDConfigTest, KeepsMluPrefixCacheForPrefillSideRoles) {
   const PrefixRoleCase cases[] = {
       {"PREFILL", true},

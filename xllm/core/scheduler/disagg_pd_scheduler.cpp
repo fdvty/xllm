@@ -21,6 +21,7 @@ limitations under the License.
 #include <brpc/server.h>
 #include <glog/logging.h>
 
+#include <algorithm>
 #include <limits>
 #include <random>
 
@@ -68,6 +69,7 @@ DisaggPDScheduler::DisaggPDScheduler(Engine* engine, const Options& options)
         &DisaggPDScheduler::start_rpc_server, this);
     initialize_rpc_server(server_name_);
     register_instance_info(server_name_, engine);
+    warmup_disaggregated_engine();
 
     // Profile ttft & topt and update instance info (for mix instances)
     if (!options_.disable_ttft_profiling() &&
@@ -180,6 +182,57 @@ void DisaggPDScheduler::register_instance_info(const std::string& server_name,
     }
   }
 #endif
+}
+
+void DisaggPDScheduler::warmup_disaggregated_engine() {
+  const DisaggPDConfig& config = DisaggPDConfig::get_instance();
+  if (!config.enable_disagg_pd_startup_warmup()) {
+    return;
+  }
+
+  const InstanceRole role = options_.instance_role().value();
+  if (role != InstanceRole::PREFILL && role != InstanceRole::DECODE &&
+      role != InstanceRole::MIX) {
+    return;
+  }
+
+  const int32_t configured_context_length =
+      config.disagg_pd_startup_warmup_context_length();
+  const int32_t configured_batch_size =
+      config.disagg_pd_startup_warmup_batch_size();
+  CHECK_GE(configured_context_length, 2);
+  CHECK_GE(configured_batch_size, 1);
+
+  const int32_t context_length =
+      std::min(configured_context_length,
+               engine_->model_args().max_position_embeddings());
+  const int32_t batch_size =
+      std::min(configured_batch_size, options_.max_seqs_per_batch());
+  CHECK_GE(context_length, 2);
+  CHECK_GE(batch_size, 1);
+
+  if (role == InstanceRole::PREFILL || role == InstanceRole::MIX) {
+    const double latency_ms =
+        profile_manager_->run_request(context_length, /*prefix_length=*/0);
+    LOG(INFO) << "Disaggregated prefill startup warmup completed: "
+              << "context_length=" << context_length
+              << ", latency=" << latency_ms << " ms";
+  }
+
+  if (role == InstanceRole::DECODE || role == InstanceRole::MIX) {
+    const double single_latency_ms = profile_manager_->run_request(
+        context_length, context_length - 1, /*batch_size=*/1);
+    double batch_latency_ms = single_latency_ms;
+    if (batch_size > 1) {
+      batch_latency_ms = profile_manager_->run_request(
+          context_length, context_length - 1, batch_size);
+    }
+    LOG(INFO) << "Disaggregated decode startup warmup completed: "
+              << "context_length=" << context_length
+              << ", batch_size=" << batch_size
+              << ", single_latency=" << single_latency_ms
+              << " ms, batch_latency=" << batch_latency_ms << " ms";
+  }
 }
 
 void DisaggPDScheduler::profile_ttft() {

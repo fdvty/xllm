@@ -28,6 +28,21 @@ DEFINE_bool(enable_disagg_pd,
             false,
             "Whether to enable disaggregated prefill and decode execution.");
 
+DEFINE_bool(enable_disagg_pd_startup_warmup,
+            false,
+            "Warm up representative prefill and decode execution shapes "
+            "before registering a disaggregated instance.");
+
+DEFINE_int32(disagg_pd_startup_warmup_batch_size,
+             8,
+             "Representative multi-request decode batch size used during "
+             "disaggregated startup warmup.");
+
+DEFINE_int32(disagg_pd_startup_warmup_context_length,
+             64,
+             "Synthetic context length used during disaggregated startup "
+             "warmup.");
+
 DEFINE_bool(enable_pd_transfer_telemetry,
             false,
             "Emit request-level disaggregated KV transfer telemetry.");
@@ -82,6 +97,9 @@ bool supports_prefix_cache(const std::string& instance_role) {
 
 void DisaggPDConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_disagg_pd);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_disagg_pd_startup_warmup);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(disagg_pd_startup_warmup_batch_size);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(disagg_pd_startup_warmup_context_length);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(enable_pd_transfer_telemetry);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(pd_transfer_telemetry_queue_capacity);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(pd_transfer_telemetry_batch_size);
@@ -97,6 +115,9 @@ void DisaggPDConfig::from_flags() {
 
 void DisaggPDConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_disagg_pd);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(enable_disagg_pd_startup_warmup);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(disagg_pd_startup_warmup_batch_size);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(disagg_pd_startup_warmup_context_length);
   XLLM_CONFIG_ASSIGN_FROM_JSON(enable_pd_transfer_telemetry);
   XLLM_CONFIG_ASSIGN_FROM_JSON(pd_transfer_telemetry_queue_capacity);
   XLLM_CONFIG_ASSIGN_FROM_JSON(pd_transfer_telemetry_batch_size);
@@ -114,6 +135,12 @@ void DisaggPDConfig::append_config_json(
   const DisaggPDConfig default_config;
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_disagg_pd);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, enable_disagg_pd_startup_warmup);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, disagg_pd_startup_warmup_batch_size);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, disagg_pd_startup_warmup_context_length);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, enable_pd_transfer_telemetry);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
